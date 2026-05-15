@@ -203,3 +203,47 @@
 		font-weight: 700;
 	}
 }
+
+.planner {
+	&__reality {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: gridSpacing(2);
+
+		@media only screen and (max-width: 900px) {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	&__envelope {
+		display: grid;
+		gap: gridSpacing(1);
+		padding: gridSpacing(2) 0;
+		border-bottom: 1px solid $grey-3;
+
+		strong {
+			font-family: $sans;
+			font-size: 18px;
+		}
+
+		small {
+			display: block;
+			color: #aeb4c5;
+			margin-top: 4px;
+		}
+	}
+
+	&__progress {
+		height: 10px;
+		border-radius: 999px;
+		background: #20222b;
+		overflow: hidden;
+
+		span {
+			display: block;
+			height: 100%;
+			border-radius: inherit;
+			background: linear-gradient(90deg, $green, #fbbf24);
+		}
+	}
+}

@@ -2,11 +2,13 @@ import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AccountBalance,
   BudgetSummary,
+  CategoryBudget,
   Debt,
   Expense,
   ExpenseKind,
   HouseholdBudgetData,
   Income,
+  IncomeExpectationStatus,
   Person,
   calculateHouseholdBudget,
   createId,
@@ -30,6 +32,7 @@ type PlannerTab =
   | "month"
   | "week"
   | "day"
+  | "household"
   | "debts"
   | "savings"
   | "export";
@@ -43,6 +46,7 @@ const tabs: { id: PlannerTab; label: string }[] = [
   { id: "month", label: "Monat" },
   { id: "week", label: "Woche" },
   { id: "day", label: "Heute" },
+  { id: "household", label: "Haushalt" },
   { id: "debts", label: "Schulden" },
   { id: "savings", label: "Sparziele" },
   { id: "export", label: "Import / Export" },
@@ -85,6 +89,19 @@ const variableCategories = [
   "Sonstiges",
 ];
 
+const incomeExpectationLabels: Record<IncomeExpectationStatus, string> = {
+  expected: "erwartet / sicher",
+  received: "bereits eingegangen",
+  uncertain: "unsicher / noch nicht einplanen",
+};
+
+const defaultCategoryBudgets: CategoryBudget[] = [
+  { category: "Lebensmittel", monthlyLimit: 550 },
+  { category: "Tanken", monthlyLimit: 180 },
+  { category: "Drogerie", monthlyLimit: 90 },
+  { category: "Freizeit", monthlyLimit: 120 },
+];
+
 const today = new Date();
 const defaultDate = toDateInputValue(today);
 
@@ -107,6 +124,7 @@ const emptyIncome = (): Income => ({
   repeat: "monthly",
   category: "Lohn / Gehalt",
   note: "",
+  expectationStatus: "expected",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 });
@@ -158,6 +176,7 @@ const normalizeBudgetData = (
   expenses: rawData.expenses || [],
   debts: rawData.debts || [],
   savingsGoals: rawData.savingsGoals || [],
+  categoryBudgets: rawData.categoryBudgets || defaultCategoryBudgets,
 });
 
 const repeatLabels: Record<string, string> = {
@@ -183,6 +202,8 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
   const [debtDraft, setDebtDraft] = useState<Debt>(emptyDebt());
   const [createDebtExpense, setCreateDebtExpense] = useState(true);
   const [importText, setImportText] = useState("");
+  const [scenarioExpenseId, setScenarioExpenseId] = useState("");
+  const [scenarioDelayDays, setScenarioDelayDays] = useState(7);
   const summary = useMemo<BudgetSummary>(
     () => calculateHouseholdBudget(data, date, today),
     [data, date],
@@ -270,7 +291,7 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
   const updateIncomeDraft = (field: keyof Income, value: string) => {
     setIncomeDraft({
       ...incomeDraft,
-      [field]: field === "amount" ? Number(value) : value,
+      [field]: ["amount", "intervalDays"].includes(field) ? Number(value) : value,
     });
   };
 
@@ -347,6 +368,19 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
       ...data,
       incomes: data.incomes.filter((income) => income.id !== incomeId),
     });
+
+  const updateCategoryBudget = (category: string, monthlyLimit: number) => {
+    const existingBudgets = data.categoryBudgets || [];
+    const nextBudget = { category, monthlyLimit: Math.max(0, monthlyLimit || 0) };
+    setData({
+      ...data,
+      categoryBudgets: existingBudgets.some((budget) => budget.category === category)
+        ? existingBudgets.map((budget) =>
+            budget.category === category ? nextBudget : budget,
+          )
+        : [...existingBudgets, nextBudget],
+    });
+  };
 
   const updateDebtDraft = (field: keyof Debt, value: string) => {
     setDebtDraft({
@@ -500,6 +534,19 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
           summary={summary}
           data={data}
           addQuickExpense={addQuickExpense}
+        />
+      )}
+      {activeTab === "household" && (
+        <HouseholdReality
+          data={data}
+          summary={summary}
+          date={date}
+          today={today}
+          updateCategoryBudget={updateCategoryBudget}
+          scenarioExpenseId={scenarioExpenseId}
+          setScenarioExpenseId={setScenarioExpenseId}
+          scenarioDelayDays={scenarioDelayDays}
+          setScenarioDelayDays={setScenarioDelayDays}
         />
       )}
       {activeTab === "debts" && (
@@ -816,6 +863,13 @@ const Incomes = ({
           onChange={(e) => updateDraft("intervalDays", e.target.value)}
         />
       )}
+      <Select
+        label="Erwartungsstatus"
+        value={draft.expectationStatus || "expected"}
+        onChange={(e) => updateDraft("expectationStatus", e.target.value)}
+        options={["expected", "received", "uncertain"]}
+        labels={incomeExpectationLabels}
+      />
       <Input
         label="Notiz"
         value={draft.note || ""}
@@ -1100,6 +1154,308 @@ const DayPlanning = ({ summary, data, addQuickExpense }: any) => {
   );
 };
 
+const parseInputDate = (dateString: string) => {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
+
+const addDaysToDateString = (dateString: string, days: number) => {
+  const date = parseInputDate(dateString);
+  date.setDate(date.getDate() + days);
+  return toDateInputValue(date);
+};
+
+const isSameSelectedMonth = (dateString: string, selectedDate: Date) => {
+  const date = parseInputDate(dateString);
+  return (
+    date.getFullYear() === selectedDate.getFullYear() &&
+    date.getMonth() === selectedDate.getMonth()
+  );
+};
+
+const getMonthlyExpenseAmount = (expense: Expense, selectedDate: Date) => {
+  if (
+    ["once", "yearly"].includes(expense.repeat) &&
+    !isSameSelectedMonth(expense.date, selectedDate)
+  ) {
+    return 0;
+  }
+
+  const monthEnd = new Date(
+    selectedDate.getFullYear(),
+    selectedDate.getMonth() + 1,
+    0,
+  );
+  const startDate = parseInputDate(expense.date);
+
+  if (startDate > monthEnd) return 0;
+  if (["once", "monthly", "yearly"].includes(expense.repeat)) return expense.amount;
+
+  const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  const fromDate = startDate > monthStart ? startDate : monthStart;
+  const intervalDays =
+    expense.repeat === "weekly"
+      ? 7
+      : expense.repeat === "custom"
+        ? Math.max(1, expense.intervalDays || 1)
+        : 1;
+  const count = Math.floor((monthEnd.getTime() - fromDate.getTime()) / (intervalDays * 24 * 60 * 60 * 1000)) + 1;
+  return roundMoney(expense.amount * Math.max(0, count));
+};
+
+const getNextOccurrenceDate = (expense: Expense, todayDate: Date) => {
+  const normalizedToday = new Date(
+    todayDate.getFullYear(),
+    todayDate.getMonth(),
+    todayDate.getDate(),
+  );
+  const startDate = parseInputDate(expense.date);
+  if (expense.repeat === "once") return startDate >= normalizedToday ? startDate : undefined;
+  if (expense.repeat === "monthly") {
+    const next = new Date(
+      normalizedToday.getFullYear(),
+      normalizedToday.getMonth(),
+      Math.min(startDate.getDate(), 28),
+    );
+    if (next < normalizedToday) next.setMonth(next.getMonth() + 1);
+    return next;
+  }
+  if (expense.repeat === "yearly") {
+    const next = new Date(
+      normalizedToday.getFullYear(),
+      startDate.getMonth(),
+      startDate.getDate(),
+    );
+    if (next < normalizedToday) next.setFullYear(next.getFullYear() + 1);
+    return next;
+  }
+
+  const intervalDays =
+    expense.repeat === "weekly"
+      ? 7
+      : expense.repeat === "custom"
+        ? Math.max(1, expense.intervalDays || 1)
+        : 1;
+  if (startDate >= normalizedToday) return startDate;
+  const elapsed = Math.ceil(
+    (normalizedToday.getTime() - startDate.getTime()) /
+      (intervalDays * 24 * 60 * 60 * 1000),
+  );
+  return new Date(
+    startDate.getFullYear(),
+    startDate.getMonth(),
+    startDate.getDate() + elapsed * intervalDays,
+  );
+};
+
+const HouseholdReality = ({
+  data,
+  summary,
+  date,
+  today,
+  updateCategoryBudget,
+  scenarioExpenseId,
+  setScenarioExpenseId,
+  scenarioDelayDays,
+  setScenarioDelayDays,
+}: {
+  data: HouseholdBudgetData;
+  summary: BudgetSummary;
+  date: Date;
+  today: Date;
+  updateCategoryBudget: (category: string, monthlyLimit: number) => void;
+  scenarioExpenseId: string;
+  setScenarioExpenseId: (expenseId: string) => void;
+  scenarioDelayDays: number;
+  setScenarioDelayDays: (days: number) => void;
+}) => {
+  const budgets = data.categoryBudgets || defaultCategoryBudgets;
+  const envelopes = budgets.map((budget) => {
+    const spent = roundMoney(
+      data.expenses
+        .filter(
+          (expense) =>
+            expense.kind === "variable" && expense.category === budget.category,
+        )
+        .reduce(
+          (total, expense) => total + getMonthlyExpenseAmount(expense, date),
+          0,
+        ),
+    );
+    return {
+      ...budget,
+      spent,
+      remaining: roundMoney(budget.monthlyLimit - spent),
+      percent:
+        budget.monthlyLimit > 0
+          ? Math.min(100, Math.round((spent / budget.monthlyLimit) * 100))
+          : 0,
+    };
+  });
+  const dueSoon = data.expenses
+    .filter((expense) => expense.status === "open")
+    .map((expense) => ({ expense, dueDate: getNextOccurrenceDate(expense, today) }))
+    .filter(({ dueDate }) => {
+      if (!dueDate) return false;
+      const daysUntil = Math.ceil(
+        (dueDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000),
+      );
+      return daysUntil >= 0 && daysUntil <= 7;
+    })
+    .sort((a, b) => (a.dueDate?.getTime() || 0) - (b.dueDate?.getTime() || 0));
+  const irregularIncomes = data.incomes.filter(
+    (income) => income.repeat !== "monthly" || income.expectationStatus === "uncertain",
+  );
+  const scenarioCandidates = data.expenses.filter(
+    (expense) => expense.status === "open" || parseInputDate(expense.date) >= today,
+  );
+  const selectedScenarioExpense =
+    scenarioCandidates.find((expense) => expense.id === scenarioExpenseId) ||
+    scenarioCandidates[0];
+  const shiftedDate = selectedScenarioExpense
+    ? addDaysToDateString(selectedScenarioExpense.date, scenarioDelayDays)
+    : "";
+  const scenarioSummary = selectedScenarioExpense
+    ? calculateHouseholdBudget(
+        {
+          ...data,
+          expenses: data.expenses.map((expense) =>
+            expense.id === selectedScenarioExpense.id
+              ? { ...expense, date: shiftedDate }
+              : expense,
+          ),
+        },
+        date,
+        today,
+      )
+    : undefined;
+  const accountCheckDifference = roundMoney(
+    summary.accountBalanceTotal + summary.incomeStillExpected - summary.openBills - summary.mandatorySavings,
+  );
+
+  return (
+    <section className="planner__reality">
+      <div className="planner__panel">
+        <h2>Umschläge nach Kategorie</h2>
+        <p>Setze Monatsrahmen für typische variable Haushaltsausgaben.</p>
+        {envelopes.map((envelope) => (
+          <div className="planner__envelope" key={envelope.category}>
+            <div>
+              <strong>{envelope.category}</strong>
+              <small>
+                Verbraucht {formatter.format(envelope.spent)} · übrig{" "}
+                {formatter.format(envelope.remaining)}
+              </small>
+            </div>
+            <Input
+              label="Monatsrahmen"
+              type="number"
+              min="0"
+              step="0.01"
+              value={envelope.monthlyLimit}
+              onChange={(e) => updateCategoryBudget(envelope.category, Number(e.target.value))}
+            />
+            <div className="planner__progress" aria-label={`${envelope.percent}% verbraucht`}>
+              <span style={{ width: `${envelope.percent}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="planner__panel">
+        <h2>Fälligkeiten in den nächsten 7 Tagen</h2>
+        {dueSoon.length === 0 && <p>Keine offenen Rechnungen in den nächsten 7 Tagen.</p>}
+        {dueSoon.map(({ expense, dueDate }) => (
+          <div className="planner__row" key={expense.id}>
+            <span>
+              <strong>{expense.name}</strong>
+              <small>
+                {expense.category} · fällig {dueDate?.toLocaleDateString("de-DE")} ·{" "}
+                {expense.critical ? "kritisch" : "normal"}
+              </small>
+            </span>
+            <span>{formatter.format(expense.amount)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="planner__panel">
+        <h2>Unregelmäßige Einnahmen</h2>
+        {irregularIncomes.length === 0 && <p>Keine unregelmäßigen oder unsicheren Einnahmen erfasst.</p>}
+        {irregularIncomes.map((income) => (
+          <div className="planner__row" key={income.id}>
+            <span>
+              <strong>{income.name}</strong>
+              <small>
+                {income.category} · {repeatLabels[income.repeat]} ·{" "}
+                {incomeExpectationLabels[income.expectationStatus || "expected"]}
+              </small>
+            </span>
+            <span>{formatter.format(income.amount)}</span>
+          </div>
+        ))}
+        <p>
+          Unsichere Einnahmen werden in der Prognose für erwartete Einnahmen nicht
+          mitgezählt.
+        </p>
+      </div>
+
+      <div className="planner__panel">
+        <h2>Szenario: Ausgabe verschieben</h2>
+        {selectedScenarioExpense ? (
+          <>
+            <Select
+              label="Ausgabe"
+              value={selectedScenarioExpense.id}
+              onChange={(e) => setScenarioExpenseId(e.target.value)}
+              options={scenarioCandidates.map((expense) => expense.id)}
+              labels={Object.fromEntries(
+                scenarioCandidates.map((expense) => [
+                  expense.id,
+                  `${expense.name} (${formatter.format(expense.amount)})`,
+                ]),
+              )}
+            />
+            <Input
+              label="Verschieben um Tage"
+              type="number"
+              value={scenarioDelayDays}
+              onChange={(e) => setScenarioDelayDays(Number(e.target.value))}
+            />
+            <p>
+              Neuer Termin: {parseInputDate(shiftedDate).toLocaleDateString("de-DE")}
+            </p>
+            <p>
+              Tagesbudget dann: {formatter.format(scenarioSummary?.dailyBudget || 0)}{" "}
+              statt {formatter.format(summary.dailyBudget)}.
+            </p>
+          </>
+        ) : (
+          <p>Keine offene oder zukünftige Ausgabe für ein Szenario vorhanden.</p>
+        )}
+      </div>
+
+      <div className="planner__panel planner__wide">
+        <h2>Stimmt die Planung noch?</h2>
+        <p>
+          Kontostände + sichere erwartete Einnahmen - offene Fixkosten - Pflichtsparen
+          ergeben aktuell {formatter.format(accountCheckDifference)} Rest-Spielraum.
+        </p>
+        <p>
+          Budget-Rest laut Monatsplanung: {formatter.format(summary.remainingMoney)}.
+        </p>
+        <p>
+          {data.accounts.length === 0
+            ? "Lege mindestens einen aktuellen Kontostand an, damit der Abgleich sinnvoll wird."
+            : Math.abs(accountCheckDifference - summary.remainingMoney) < 1
+              ? "Kontostände und Planung passen zusammen."
+              : "Bitte Kontostände, offene Rechnungen oder erwartete Einnahmen prüfen."}
+        </p>
+      </div>
+    </section>
+  );
+};
+
 const Debts = ({
   data,
   draft,
@@ -1256,6 +1612,7 @@ const List = ({ title, items, remove }: any) => (
           <strong>{item.name}</strong>
           <small>
             {item.category} · {repeatLabels[item.repeat] || item.repeat}
+            {item.expectationStatus ? ` · ${incomeExpectationLabels[item.expectationStatus as IncomeExpectationStatus]}` : ""}
             {item.repeat === "custom"
               ? ` (${item.intervalDays || 1} Tage)`
               : ""}
