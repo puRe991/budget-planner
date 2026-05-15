@@ -1,13 +1,12 @@
 @import "./resources/styles/settings.scss";
 
-* {
-	box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
 	color: $white;
-	background-color: $grey-1;
+	background: radial-gradient(circle at top left, rgba(34, 182, 109, .16), transparent 34%), $grey-1;
 	font-family: $sans;
+	min-height: 100vh;
 }
 
 h3 {
@@ -17,8 +16,25 @@ h3 {
 	margin: 0;
 }
 
-
-// DELETE!!!
 .nav {
-	position: absolute;
+	position: fixed;
+	left: 16px;
+	bottom: 16px;
+	z-index: 10;
+	display: flex;
+	gap: 8px;
+	list-style: none;
+	padding: 8px;
+	margin: 0;
+	background: rgba(45, 46, 56, .8);
+	border: 1px solid $grey-3;
+	border-radius: 999px;
+	backdrop-filter: blur(12px);
+
+	a {
+		color: $white;
+		text-decoration: none;
+		font-size: 12px;
+		font-weight: 700;
+	}
 }
