@@ -6,20 +6,21 @@ Eine lokale React-Web-App für die Budgetplanung mehrerer Personen in einem Haus
 
 ## Funktionen
 
-- Dashboard mit Gesamtgeld, Restgeld bis Monatsende, Tagesbudget, Wochenbudget, bezahlten Ausgaben und offenen Fixkosten.
+- Dashboard mit aktuellen Kontoständen, Restgeld bis Monatsende, Tagesbudget, Wochenbudget, bezahlten Ausgaben und offenen Fixkosten.
+- Manuell anpassbare Kontostände für Girokonto, Bargeld oder weitere Konten; diese Werte werden für die Budgetprognose genutzt.
 - Personenverwaltung für Einkommen, persönliches freies Budget, Kostenanteil und optionale Sparziele.
 - Erfassung von Einnahmen wie Gehalt, Sozialleistungen, Kindergeld, Unterhalt, Nebenjob, Rückzahlungen und sonstige Einnahmen.
-- Erfassung von Fixkosten und variablen Ausgaben inklusive Status `offen` oder `bezahlt`, Wiederholung und Notiz.
+- Erfassung von Fixkosten und variablen Ausgaben inklusive Status `offen` oder `bezahlt`, Wiederholung, benutzerdefiniertem Intervall wie „alle 3 Tage“ und Notiz.
 - Automatische Monatsende-Berechnung:
-  - Restgeld = gesamte Monatseinnahmen - bezahlte Ausgaben - offene Pflichtausgaben - verpflichtende Sparziele
+  - Restgeld = aktuelle Kontostände + noch erwartete Einnahmen - offene Pflichtausgaben - verpflichtende Sparziele
   - Tagesbudget = Restgeld / verbleibende Tage bis Monatsende
   - Wochenbudget = Tagesbudget × 7
 - Ampel-Warnsystem mit Grün/Gelb/Rot, Prognose zum Aufbrauchdatum, Fehlbetrag und täglichem Sparbedarf.
 - Monats-, Wochen- und Tagesansicht inklusive schneller Ausgabe für heute.
-- Bereiche für Schulden/Raten und Sparziele.
+- Bereiche für Schulden/Raten und Sparziele; Schulden können optional direkt als offene monatliche Fixkosten in das Budget übernommen werden.
 - Kategorien für Wohnen, Energie, Kommunikation, Lebensmittel, Mobilität, Versicherungen, Schulden, Gesundheit, Haustiere, Kinder, Freizeit, Kleidung, Abos und Sonstiges.
 - Manueller CSV-Export, JSON-Backup, JSON-Import und PDF-Export über die Browserfunktion „Drucken → Als PDF speichern“.
-- Lokale Speicherung im Browser (`localStorage`), keine versteckten Tracking-Funktionen.
+- Sofortige lokale Speicherung im Browser (`localStorage`) nach jeder Änderung, keine versteckten Tracking-Funktionen.
 
 ## Lokale Entwicklung
 
@@ -42,6 +43,16 @@ npm run build --prefix client
 ```
 
 > Hinweis für Windows und aktuelle Node-Versionen: Das Projekt verwendet `react-scripts@4`. Die Client-Skripte setzen die notwendige OpenSSL-Kompatibilitätsoption automatisch, sodass kein manuelles `NODE_OPTIONS=...` in der Eingabeaufforderung nötig ist.
+
+## Windows-Autostart
+
+Das Projekt kann Windows nicht ungefragt in den Autostart schreiben. Dafür liegt ein Starter-Skript bei:
+
+1. Einmal `scripts\windows-autostart-budget-planner.cmd` testen.
+2. Mit `Win + R` den Ordner `shell:startup` öffnen.
+3. Eine Verknüpfung zu `scripts\windows-autostart-budget-planner.cmd` in diesen Autostart-Ordner legen.
+
+Beim nächsten Windows-Login startet das Skript `npm run dev` im Projektordner und öffnet danach `http://localhost:3000`.
 
 ## Beispieldaten
 
