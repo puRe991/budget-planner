@@ -9,6 +9,7 @@ export type RepeatType =
 export type PaymentStatus = "open" | "paid";
 export type BudgetStatus = "green" | "yellow" | "red";
 export type ExpenseKind = "fixed" | "variable";
+export type IncomeExpectationStatus = "expected" | "received" | "uncertain";
 
 export interface AccountBalance {
   id: string;
@@ -48,6 +49,7 @@ export interface Income {
   intervalDays?: number;
   category: string;
   note?: string;
+  expectationStatus?: IncomeExpectationStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,6 +83,11 @@ export interface Debt {
   notes?: string;
 }
 
+export interface CategoryBudget {
+  category: string;
+  monthlyLimit: number;
+}
+
 export interface SavingsGoal {
   id: string;
   name: string;
@@ -100,6 +107,7 @@ export interface HouseholdBudgetData {
   expenses: Expense[];
   debts: Debt[];
   savingsGoals: SavingsGoal[];
+  categoryBudgets?: CategoryBudget[];
 }
 
 export interface PersonBudget {
@@ -575,8 +583,11 @@ export function calculateHouseholdBudget(
   const remainingDays = calculateRemainingDaysInMonth(today, selectedDate);
   const remainingWeeks = Math.max(1, remainingDays / 7);
   const totalIncome = calculateTotalIncome(data, selectedDate);
+  const forecastableIncomes = data.incomes.filter(
+    (income) => income.expectationStatus !== "uncertain",
+  );
   const incomeStillExpected = sum(
-    data.incomes
+    forecastableIncomes
       .filter((income) =>
         occursFromToday(
           income.date,

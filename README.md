@@ -17,6 +17,7 @@ Eine lokale React-Web-App für die Budgetplanung mehrerer Personen in einem Haus
   - Wochenbudget = Tagesbudget × 7
 - Ampel-Warnsystem mit Grün/Gelb/Rot, Prognose zum Aufbrauchdatum, Fehlbetrag und täglichem Sparbedarf.
 - Monats-, Wochen- und Tagesansicht inklusive schneller Ausgabe für heute.
+- Haushaltsrealität-Ansicht mit Kategorie-Umschlägen, Fälligkeiten der nächsten 7 Tage, unregelmäßigen Einnahmen, Verschiebe-Szenarien und Konto-vs.-Plan-Abgleich.
 - Bereiche für Schulden/Raten und Sparziele; Schulden können optional direkt als offene monatliche Fixkosten in das Budget übernommen werden.
 - Kategorien für Wohnen, Energie, Kommunikation, Lebensmittel, Mobilität, Versicherungen, Schulden, Gesundheit, Haustiere, Kinder, Freizeit, Kleidung, Abos und Sonstiges.
 - Manueller CSV-Export, JSON-Backup, JSON-Import und PDF-Export über die Browserfunktion „Drucken → Als PDF speichern“.
