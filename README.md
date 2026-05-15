@@ -24,12 +24,24 @@ Eine lokale React-Web-App für die Budgetplanung mehrerer Personen in einem Haus
 ## Lokale Entwicklung
 
 ```bash
+npm install
 npm install --prefix client
-NODE_OPTIONS=--openssl-legacy-provider npm run build --prefix client
+npm run dev
+```
+
+Alternativ kann nur die React-App gestartet werden:
+
+```bash
 npm run client
 ```
 
-> Hinweis: Das Projekt verwendet `react-scripts@4`. Unter aktuellen Node-Versionen ist für den Produktionsbuild `NODE_OPTIONS=--openssl-legacy-provider` nötig.
+Für einen Produktionsbuild der React-App:
+
+```bash
+npm run build --prefix client
+```
+
+> Hinweis für Windows und aktuelle Node-Versionen: Das Projekt verwendet `react-scripts@4`. Die Client-Skripte setzen die notwendige OpenSSL-Kompatibilitätsoption automatisch, sodass kein manuelles `NODE_OPTIONS=...` in der Eingabeaufforderung nötig ist.
 
 ## Beispieldaten
 

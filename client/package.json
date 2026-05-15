@@ -21,8 +21,8 @@
     "sass": "^1.77.8"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
+    "start": "node scripts/react-scripts-runner.js start",
+    "build": "node scripts/react-scripts-runner.js build",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
