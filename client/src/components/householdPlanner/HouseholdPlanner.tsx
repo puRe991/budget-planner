@@ -528,12 +528,13 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
         />
       )}
       {activeTab === "month" && <MonthPlanning summary={summary} />}
-      {activeTab === "week" && <WeekPlanning summary={summary} data={data} />}
+      {activeTab === "week" && <WeekPlanning summary={summary} data={data} date={date} />}
       {activeTab === "day" && (
         <DayPlanning
           summary={summary}
           data={data}
           addQuickExpense={addQuickExpense}
+          selectedDate={date}
         />
       )}
       {activeTab === "household" && (
@@ -1065,14 +1066,24 @@ const MonthPlanning = ({ summary }: { summary: BudgetSummary }) => (
 const WeekPlanning = ({
   summary,
   data,
+  date,
 }: {
   summary: BudgetSummary;
   data: HouseholdBudgetData;
+  date: Date;
 }) => {
+  const selectedMonth = date.getMonth();
+  const selectedYear = date.getFullYear();
   const spentThisWeek = roundMoney(
     data.expenses
-      .filter((expense) => expense.status === "paid")
-      .slice(-5)
+      .filter((expense) => {
+        const expenseDate = parseInputDate(expense.date);
+        return (
+          expense.status === "paid" &&
+          expenseDate.getMonth() === selectedMonth &&
+          expenseDate.getFullYear() === selectedYear
+        );
+      })
       .reduce((total, expense) => total + expense.amount, 0),
   );
   return (
@@ -1115,14 +1126,15 @@ const WeekPlanning = ({
   );
 };
 
-const DayPlanning = ({ summary, data, addQuickExpense }: any) => {
+const DayPlanning = ({ summary, data, addQuickExpense, selectedDate }: any) => {
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
+  const selectedDateValue = toDateInputValue(selectedDate);
   const spentToday = roundMoney(
     data.expenses
       .filter(
         (expense: Expense) =>
-          expense.status === "paid" && expense.date === defaultDate,
+          expense.status === "paid" && expense.date === selectedDateValue,
       )
       .reduce((total: number, expense: Expense) => total + expense.amount, 0),
   );
