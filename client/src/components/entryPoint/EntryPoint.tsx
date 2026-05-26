@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import './entryPoint.scss';
 import { useHistory } from 'react-router-dom';
 import { Base64 } from 'js-base64';
@@ -7,6 +7,58 @@ const { Client } = require('@notionhq/client');
 const EntryPoint = () => {
 	const history = useHistory();
 	const DATABASE_NAME = 'BudgetData';
+	const notionClientId = process.env.REACT_APP_NOTION_CLIENT_ID;
+	const notionClientSecret = process.env.REACT_APP_NOTION_CLIENT_SECRET;
+
+	const saveTokensInLocalStorage = useCallback((code: string) => {
+		const data = {
+			grant_type: 'authorization_code',
+			code,
+			redirect_uri: 'http://localhost:3000/'
+		};
+
+		if (!notionClientId || !notionClientSecret) {
+			console.error('Missing Notion OAuth credentials in environment.');
+			history.push('/error');
+			return;
+		}
+
+		fetch('https://api.notion.com/v1/oauth/token', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Basic ' + Base64.encode(`${notionClientId}:${notionClientSecret}`)
+			},
+			body: JSON.stringify(data),
+		})
+			.then(response => response.json())
+			.then(data => {
+				window.localStorage.setItem('access_token', data.access_token);
+				const notion = new Client({ auth: data.access_token });
+				(async () => {
+					const response = await notion.search({
+						query: DATABASE_NAME,
+						sort: {
+							direction: 'ascending',
+							timestamp: 'last_edited_time',
+						},
+						filter: {
+							value: 'database',
+							property: 'object'
+						}
+					});
+					if (response.results.length > 0) {
+						window.localStorage.setItem('database_id', response.results[0]?.id);
+						history.push('/app');
+					} else {
+						history.push('/error/noDatabase');
+					}
+				})();
+			})
+			.catch(() => {
+				history.push('/error');
+			});
+	}, [DATABASE_NAME, history, notionClientId, notionClientSecret]);
 
 	useEffect(() => {
 		const accessToken = window.localStorage.getItem('access_token');
@@ -16,71 +68,19 @@ const EntryPoint = () => {
 		const code = urlParams.get('code');
 
 		if (accessToken && dataBaseId) {
-			// user already has access
 			history.push('/app');
 		} else if (code) {
-			// new login was successful
 			saveTokensInLocalStorage(code);
 		} else {
-			// user needs to log in
 			history.push('/login');
 		}
-	}, []);
-
-	const saveTokensInLocalStorage = (code) => {
-		const data = {
-			grant_type: 'authorization_code',
-			code: code,
-			redirect_uri: 'http://localhost:3000/'
-		};
-
-		fetch('https://api.notion.com/v1/oauth/token', {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'Authorization': 'Basic ' + Base64.encode("8ea80354-4594-4c11-b860-6a1dde31b53f:secret_DD6CGmR0aLylLDG6QKGcVhOlX2X20n2GnOeFdkpUUXh") //TODO: SAVE TOKENS IN SECRETS!!
-		},
-		body: JSON.stringify(data),
-		})
-		.then(response => response.json())
-		.then(data => {
-			console.log('data:', data);
-			window.localStorage.setItem('access_token', data.access_token);
-			
-			const notion = new Client({ auth: data.access_token });
-			(async () => {
-				const response = await notion.search({
-					query: DATABASE_NAME,
-					sort: {
-						direction: 'ascending',
-						timestamp: 'last_edited_time',
-					},
-					filter: {
-						value: 'database',
-						property: 'object'
-					}
-				});
-				console.log('database', response);
-				if (response.results.length > 0) {
-					window.localStorage.setItem('database_id', response.results[0]?.id);
-					history.push('/app');
-				} else {
-					// no database with correct name found
-					history.push('/error/noDatabase');
-				}
-			})();
-		})
-		.catch((error) => {
-			console.error('Error:', error);
-			history.push('/error');
-		});
-	};
+	}, [history, saveTokensInLocalStorage]);
 
 	return (
 		<div className="entryPoint">
 			<div className="entryPoint__loading"></div>
 		</div>
-	)
+	);
 };
 
-export { EntryPoint }
+export { EntryPoint };
