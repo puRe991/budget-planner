@@ -31,6 +31,18 @@ npm install --prefix client
 npm run dev
 ```
 
+### Windows-Fehlerbehebung (häufig)
+
+Wenn beim Start `Der Befehl "concurrently" ... konnte nicht gefunden werden.` erscheint, fehlen die Root-Abhängigkeiten. Dann im **Projekt-Root** ausführen:
+
+```bash
+npm install
+npm install --prefix client
+npm run dev
+```
+
+Wenn im `client`-Ordner `npm run dev` fehlt: Es gibt dort jetzt einen Alias, der intern `npm start` nutzt.
+
 Alternativ kann nur die React-App gestartet werden:
 
 ```bash
