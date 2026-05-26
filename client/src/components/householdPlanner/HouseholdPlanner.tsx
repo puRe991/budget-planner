@@ -528,12 +528,13 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
         />
       )}
       {activeTab === "month" && <MonthPlanning summary={summary} />}
-      {activeTab === "week" && <WeekPlanning summary={summary} data={data} />}
+      {activeTab === "week" && <WeekPlanning summary={summary} data={data} date={date} />}
       {activeTab === "day" && (
         <DayPlanning
           summary={summary}
           data={data}
           addQuickExpense={addQuickExpense}
+          selectedDate={date}
         />
       )}
       {activeTab === "household" && (
@@ -582,6 +583,14 @@ const Dashboard = ({
   data: HouseholdBudgetData;
 }) => (
   <section className="planner__grid">
+    <div className="planner__card planner__wide planner__focusRow">
+      <h3>Kernwerte heute</h3>
+      <p>
+        Restgeld bis Monatsende <strong>{formatter.format(summary.remainingMoney)}</strong> ·
+        Tagesbudget <strong>{formatter.format(summary.dailyBudget)}</strong> · Wochenbudget{" "}
+        <strong>{formatter.format(summary.weeklyBudget)}</strong>
+      </p>
+    </div>
     <Metric
       title="Aktuelle Kontostände"
       value={formatter.format(summary.accountBalanceTotal)}
@@ -705,6 +714,9 @@ const Accounts = ({
           ),
         )}
       </p>
+      {(data.accounts || []).length === 0 && (
+        <EmptyState text="Noch kein Konto vorhanden. Lege ein Konto oder Bargeld an, damit das Budget realistisch ist." />
+      )}
       {(data.accounts || []).map((account: AccountBalance) => (
         <div className="planner__row planner__row--account" key={account.id}>
           <span>
@@ -772,6 +784,9 @@ const Persons = ({
     </form>
     <div className="planner__panel">
       <h2>Geld pro Person</h2>
+      {summary.personBudgets.length === 0 && (
+        <EmptyState text="Noch keine Person erfasst. Lege mindestens eine Person an, um Budgets pro Person aufzuteilen." />
+      )}
       {summary.personBudgets.map((budget: any) => (
         <div className="planner__row" key={budget.personId}>
           <span>
@@ -982,6 +997,9 @@ const Expenses = ({
     </form>
     <div className="planner__panel">
       <h2>Ausgaben</h2>
+      {data.expenses.length === 0 && (
+        <EmptyState text="Noch keine Ausgaben vorhanden. Starte mit einer Fixkosten- oder variablen Ausgabe." />
+      )}
       {data.expenses.map((expense: Expense) => (
         <div className="planner__row" key={expense.id}>
           <span>
@@ -1048,14 +1066,24 @@ const MonthPlanning = ({ summary }: { summary: BudgetSummary }) => (
 const WeekPlanning = ({
   summary,
   data,
+  date,
 }: {
   summary: BudgetSummary;
   data: HouseholdBudgetData;
+  date: Date;
 }) => {
+  const selectedMonth = date.getMonth();
+  const selectedYear = date.getFullYear();
   const spentThisWeek = roundMoney(
     data.expenses
-      .filter((expense) => expense.status === "paid")
-      .slice(-5)
+      .filter((expense) => {
+        const expenseDate = parseInputDate(expense.date);
+        return (
+          expense.status === "paid" &&
+          expenseDate.getMonth() === selectedMonth &&
+          expenseDate.getFullYear() === selectedYear
+        );
+      })
       .reduce((total, expense) => total + expense.amount, 0),
   );
   return (
@@ -1098,14 +1126,15 @@ const WeekPlanning = ({
   );
 };
 
-const DayPlanning = ({ summary, data, addQuickExpense }: any) => {
+const DayPlanning = ({ summary, data, addQuickExpense, selectedDate }: any) => {
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
+  const selectedDateValue = toDateInputValue(selectedDate);
   const spentToday = roundMoney(
     data.expenses
       .filter(
         (expense: Expense) =>
-          expense.status === "paid" && expense.date === defaultDate,
+          expense.status === "paid" && expense.date === selectedDateValue,
       )
       .reduce((total: number, expense: Expense) => total + expense.amount, 0),
   );
@@ -1521,6 +1550,9 @@ const Debts = ({
     </form>
     <div className="planner__panel">
       <h2>Schulden und Raten</h2>
+      {data.debts.length === 0 && (
+        <EmptyState text="Keine Schulden hinterlegt. Falls vorhanden, trage sie hier für eine bessere Planung ein." />
+      )}
       {data.debts.map((debt: Debt) => (
         <div className="planner__row" key={debt.id}>
           <span>
@@ -1541,6 +1573,9 @@ const Debts = ({
 const Savings = ({ data }: { data: HouseholdBudgetData }) => (
   <section className="planner__panel">
     <h2>Sparziele</h2>
+    {data.savingsGoals.length === 0 && (
+      <EmptyState text="Keine Sparziele erfasst. Ergänze Ziele, um den Fortschritt sichtbar zu machen." />
+    )}
     {data.savingsGoals.map((goal) => (
       <div className="planner__row" key={goal.id}>
         <span>
@@ -1606,6 +1641,9 @@ const ExportArea = ({
 const List = ({ title, items, remove }: any) => (
   <div className="planner__panel">
     <h2>{title}</h2>
+    {items.length === 0 && (
+      <EmptyState text={`Noch keine Einträge in „${title}“.`} />
+    )}
     {items.map((item: any) => (
       <div className="planner__row" key={item.id}>
         <span>
@@ -1623,6 +1661,9 @@ const List = ({ title, items, remove }: any) => (
       </div>
     ))}
   </div>
+);
+const EmptyState = ({ text }: { text: string }) => (
+  <p className="planner__emptyState">{text}</p>
 );
 const Input = ({ label, ...props }: { label: string; [key: string]: any }) => (
   <label className="planner__field">
