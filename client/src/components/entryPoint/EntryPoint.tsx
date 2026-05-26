@@ -7,6 +7,8 @@ const { Client } = require('@notionhq/client');
 const EntryPoint = () => {
 	const history = useHistory();
 	const DATABASE_NAME = 'BudgetData';
+	const notionClientId = process.env.REACT_APP_NOTION_CLIENT_ID;
+	const notionClientSecret = process.env.REACT_APP_NOTION_CLIENT_SECRET;
 
 	useEffect(() => {
 		const accessToken = window.localStorage.getItem('access_token');
@@ -25,7 +27,7 @@ const EntryPoint = () => {
 			// user needs to log in
 			history.push('/login');
 		}
-	}, []);
+		}, [history]);
 
 	const saveTokensInLocalStorage = (code) => {
 		const data = {
@@ -34,12 +36,18 @@ const EntryPoint = () => {
 			redirect_uri: 'http://localhost:3000/'
 		};
 
-		fetch('https://api.notion.com/v1/oauth/token', {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'Authorization': 'Basic ' + Base64.encode("8ea80354-4594-4c11-b860-6a1dde31b53f:secret_DD6CGmR0aLylLDG6QKGcVhOlX2X20n2GnOeFdkpUUXh") //TODO: SAVE TOKENS IN SECRETS!!
-		},
+			if (!notionClientId || !notionClientSecret) {
+				console.error('Missing Notion OAuth credentials in environment.');
+				history.push('/error');
+				return;
+			}
+
+			fetch('https://api.notion.com/v1/oauth/token', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': 'Basic ' + Base64.encode(`${notionClientId}:${notionClientSecret}`)
+			},
 		body: JSON.stringify(data),
 		})
 		.then(response => response.json())
