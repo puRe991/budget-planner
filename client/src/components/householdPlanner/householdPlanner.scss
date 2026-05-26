@@ -202,6 +202,28 @@
 		font-size: 32px;
 		font-weight: 700;
 	}
+
+	&__focusRow {
+		p {
+			margin: 0;
+			color: #d7d9e5;
+			line-height: 1.5;
+		}
+
+		strong {
+			display: inline;
+			font-size: inherit;
+		}
+	}
+
+	&__emptyState {
+		margin: 0 0 gridSpacing(2);
+		padding: gridSpacing(2);
+		border-radius: 12px;
+		background: rgba(255, 255, 255, .04);
+		border: 1px dashed $grey-3;
+		color: #cbd5e1;
+	}
 }
 
 .planner {
