@@ -37,6 +37,15 @@ Alternativ kann nur die React-App gestartet werden:
 npm run client
 ```
 
+### Notion OAuth konfigurieren (für Login-Flows)
+
+Im Client werden für den Notion OAuth-Flow zwei Umgebungsvariablen benötigt:
+
+1. `client/.env.example` nach `client/.env` kopieren.
+2. Werte für `REACT_APP_NOTION_CLIENT_ID` und `REACT_APP_NOTION_CLIENT_SECRET` eintragen.
+
+Ohne diese Werte leitet die App den OAuth-Start kontrolliert auf die Fehlerseite um, statt mit ungültigen Zugangsdaten weiterzulaufen.
+
 Für einen Produktionsbuild der React-App:
 
 ```bash
@@ -58,6 +67,8 @@ Beim nächsten Windows-Login startet das Skript `npm run dev` im Projektordner u
 ## Beispieldaten
 
 Die App startet mit Beispieldaten für zwei Personen, 2.500 € Monatseinnahmen, bezahlten Fixkosten, bereits variablen Ausgaben und offenen Pflichtausgaben. Am 15. Mai 2026 bleiben damit 16 Tage bis Monatsende, sodass die Kernberechnung direkt überprüfbar ist.
+
+Für einen produktiven Erststart sollte nach der Funktionsprüfung ein eigener Datenstand aufgebaut bzw. ein eigener JSON-Backup-Stand importiert werden.
 
 ## Architektur
 
