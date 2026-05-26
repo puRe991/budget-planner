@@ -1085,16 +1085,17 @@ const WeekPlanning = ({
   data: HouseholdBudgetData;
   date: Date;
 }) => {
-  const selectedMonth = date.getMonth();
-  const selectedYear = date.getFullYear();
+  const selectedWeekStart = getStartOfWeek(date);
+  const selectedWeekEnd = new Date(selectedWeekStart);
+  selectedWeekEnd.setDate(selectedWeekStart.getDate() + 6);
   const spentThisWeek = roundMoney(
     data.expenses
       .filter((expense) => {
         const expenseDate = parseInputDate(expense.date);
         return (
           expense.status === "paid" &&
-          expenseDate.getMonth() === selectedMonth &&
-          expenseDate.getFullYear() === selectedYear
+          expenseDate >= selectedWeekStart &&
+          expenseDate <= selectedWeekEnd
         );
       })
       .reduce((total, expense) => total + expense.amount, 0),
@@ -1199,6 +1200,15 @@ const DayPlanning = ({ summary, data, addQuickExpense, selectedDate }: any) => {
 const parseInputDate = (dateString: string) => {
   const [year, month, day] = dateString.split("-").map(Number);
   return new Date(year, month - 1, day);
+};
+
+const getStartOfWeek = (selectedDate: Date) => {
+  const weekStart = new Date(selectedDate);
+  const dayOfWeek = weekStart.getDay();
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+  weekStart.setHours(0, 0, 0, 0);
+  return weekStart;
 };
 
 const addDaysToDateString = (dateString: string, days: number) => {
