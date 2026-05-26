@@ -892,7 +892,14 @@ const Incomes = ({
       />
       <button className="planner__primary">Einnahme speichern</button>
     </form>
-    <List title="Einnahmen" items={data.incomes} remove={removeIncome} />
+    <List
+      title="Einnahmen"
+      items={data.incomes}
+      remove={removeIncome}
+      renderMeta={(item: Income) =>
+        `${item.category} · ${repeatLabels[item.repeat] || item.repeat} · ${incomeExpectationLabels[item.expectationStatus || "expected"]} · Datum ${new Date(item.date).toLocaleDateString("de-DE")}`
+      }
+    />
   </section>
 );
 
@@ -1000,7 +1007,12 @@ const Expenses = ({
       {data.expenses.length === 0 && (
         <EmptyState text="Noch keine Ausgaben vorhanden. Starte mit einer Fixkosten- oder variablen Ausgabe." />
       )}
-      {data.expenses.map((expense: Expense) => (
+      {[...data.expenses]
+        .sort(
+          (a, b) =>
+            new Date(b.date).getTime() - new Date(a.date).getTime(),
+        )
+        .map((expense: Expense) => (
         <div className="planner__row" key={expense.id}>
           <span>
             <strong>{expense.name}</strong>
@@ -1008,7 +1020,8 @@ const Expenses = ({
               {expense.kind === "fixed" ? "Fixkosten" : "Variabel"} ·{" "}
               {expense.category} ·{" "}
               {expense.status === "open" ? "offen" : "bezahlt"} ·{" "}
-              {repeatLabels[expense.repeat]}
+              {repeatLabels[expense.repeat]} · Datum{" "}
+              {new Date(expense.date).toLocaleDateString("de-DE")}
               {expense.repeat === "custom"
                 ? ` (${expense.intervalDays || 1} Tage)`
                 : ""}
@@ -1072,16 +1085,17 @@ const WeekPlanning = ({
   data: HouseholdBudgetData;
   date: Date;
 }) => {
-  const selectedMonth = date.getMonth();
-  const selectedYear = date.getFullYear();
+  const selectedWeekStart = getStartOfWeek(date);
+  const selectedWeekEnd = new Date(selectedWeekStart);
+  selectedWeekEnd.setDate(selectedWeekStart.getDate() + 6);
   const spentThisWeek = roundMoney(
     data.expenses
       .filter((expense) => {
         const expenseDate = parseInputDate(expense.date);
         return (
           expense.status === "paid" &&
-          expenseDate.getMonth() === selectedMonth &&
-          expenseDate.getFullYear() === selectedYear
+          expenseDate >= selectedWeekStart &&
+          expenseDate <= selectedWeekEnd
         );
       })
       .reduce((total, expense) => total + expense.amount, 0),
@@ -1186,6 +1200,15 @@ const DayPlanning = ({ summary, data, addQuickExpense, selectedDate }: any) => {
 const parseInputDate = (dateString: string) => {
   const [year, month, day] = dateString.split("-").map(Number);
   return new Date(year, month - 1, day);
+};
+
+const getStartOfWeek = (selectedDate: Date) => {
+  const weekStart = new Date(selectedDate);
+  const dayOfWeek = weekStart.getDay();
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+  weekStart.setHours(0, 0, 0, 0);
+  return weekStart;
 };
 
 const addDaysToDateString = (dateString: string, days: number) => {
@@ -1638,22 +1661,22 @@ const ExportArea = ({
   </section>
 );
 
-const List = ({ title, items, remove }: any) => (
+const List = ({ title, items, remove, renderMeta }: any) => (
   <div className="planner__panel">
     <h2>{title}</h2>
     {items.length === 0 && (
       <EmptyState text={`Noch keine Einträge in „${title}“.`} />
     )}
-    {items.map((item: any) => (
+    {[...items]
+      .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+      .map((item: any) => (
       <div className="planner__row" key={item.id}>
         <span>
           <strong>{item.name}</strong>
           <small>
-            {item.category} · {repeatLabels[item.repeat] || item.repeat}
-            {item.expectationStatus ? ` · ${incomeExpectationLabels[item.expectationStatus as IncomeExpectationStatus]}` : ""}
-            {item.repeat === "custom"
-              ? ` (${item.intervalDays || 1} Tage)`
-              : ""}
+            {renderMeta
+              ? renderMeta(item)
+              : `${item.category} · ${repeatLabels[item.repeat] || item.repeat}${item.expectationStatus ? ` · ${incomeExpectationLabels[item.expectationStatus as IncomeExpectationStatus]}` : ""} · Datum ${item.date ? new Date(item.date).toLocaleDateString("de-DE") : "-"}${item.repeat === "custom" ? ` (${item.intervalDays || 1} Tage)` : ""}`}
           </small>
         </span>
         <span>{formatter.format(item.amount)}</span>
