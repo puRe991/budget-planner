@@ -26,22 +26,26 @@ Eine lokale React-Web-App für die Budgetplanung mehrerer Personen in einem Haus
 ## Lokale Entwicklung
 
 ```bash
-npm install
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 npm install --prefix client
 npm run dev
 ```
 
 ### Windows-Fehlerbehebung (häufig)
 
-Wenn beim Start `Der Befehl "concurrently" ... konnte nicht gefunden werden.` erscheint, fehlen die Root-Abhängigkeiten. Dann im **Projekt-Root** ausführen:
+Wenn beim Start `ModuleNotFoundError: No module named 'flask'` erscheint, fehlen die Python-Abhängigkeiten. Dann im **Projekt-Root** ausführen:
 
 ```bash
-npm install
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 npm install --prefix client
 npm run dev
 ```
 
-Wenn im `client`-Ordner `npm run dev` fehlt: Es gibt dort jetzt einen Alias, der intern `npm start` nutzt.
+Wenn im `client`-Ordner `npm run dev` fehlt: Es gibt dort einen Alias, der intern `npm start` nutzt.
 
 Alternativ kann nur die React-App gestartet werden:
 
@@ -78,12 +82,15 @@ Beim nächsten Windows-Login startet das Skript `npm run dev` im Projektordner u
 
 ## Beispieldaten
 
-Die App startet mit Beispieldaten für zwei Personen, 2.500 € Monatseinnahmen, bezahlten Fixkosten, bereits variablen Ausgaben und offenen Pflichtausgaben. Am 15. Mai 2026 bleiben damit 16 Tage bis Monatsende, sodass die Kernberechnung direkt überprüfbar ist.
+Die App startet mit Beispieldaten für zwei Personen, 2.500 € Monatseinnahmen, bezahlten Fixkosten, bereits variablen Ausgaben und offenen Pflichtausgaben. Am 15. Mai 2026 bleiben inklusive Starttag 17 Tage bis Monatsende, sodass die Kernberechnung direkt überprüfbar ist.
 
 Für einen produktiven Erststart sollte nach der Funktionsprüfung ein eigener Datenstand aufgebaut bzw. ein eigener JSON-Backup-Stand importiert werden.
 
 ## Architektur
 
-- `client/src/resources/scripts/budgetEngine.ts` enthält Datenmodell, Beispieldaten und testbare Berechnungsfunktionen.
+- `server/app.py` enthält die Python/Flask-API für Status, Notion-Daten und Budget-Zusammenfassungen.
+- `server/notion.py` enthält die Notion-Abfrage inklusive Pagination, Validierung und Normalisierung.
+- `budget_planner/budget_engine.py` enthält die in Python übernommene Budgetlogik mit Datenmodell-Hilfsfunktionen, Beispieldaten und testbaren Berechnungsfunktionen.
+- `client/src/resources/scripts/budgetEngine.ts` enthält weiterhin die clientseitige Budgetlogik für die React-Oberfläche.
 - `client/src/components/householdPlanner/HouseholdPlanner.tsx` enthält die produktive Oberfläche für Dashboard, Personen, Einnahmen, Ausgaben, Monats-, Wochen-, Tagesansicht, Schulden, Sparziele und Import/Export.
 - `client/src/components/householdPlanner/householdPlanner.scss` enthält das mobile, kartenbasierte Finanz-UX-Design.
