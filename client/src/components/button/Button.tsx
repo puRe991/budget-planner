@@ -2,13 +2,12 @@ import React from 'react';
 import './button.scss';
 import { ReactComponent as ArrowLeftIcon } from '../../resources/icons/arrow-left.svg';
 import { ReactComponent as ArrowRightIcon } from '../../resources/icons/arrow-right.svg';
-import { ReactComponent as NotionLogo } from '../../resources/icons/notion-logo.svg';
 
 interface ButtonProps {
 	text: string,
 	handleClick?: Function,
 	link?: string,
-	icon?: "arrowLeft" | "arrowRight" | "notionLogo"
+	icon?: "arrowLeft" | "arrowRight"
 }
 
 const Button = (props: ButtonProps) => {
@@ -20,8 +19,6 @@ const Button = (props: ButtonProps) => {
 			return <ArrowLeftIcon />
 		} else if (props.icon === "arrowRight") {
 			return <ArrowRightIcon />
-		} else if (props.icon === "notionLogo") {
-			return <NotionLogo />
 		}
 	};
 
