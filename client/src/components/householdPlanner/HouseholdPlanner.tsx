@@ -191,7 +191,13 @@ const repeatLabels: Record<string, string> = {
 const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
   const [data, setData] = useState<HouseholdBudgetData>(() => {
     const stored = window.localStorage.getItem("household-budget-planner");
-    return stored ? normalizeBudgetData(JSON.parse(stored)) : sampleBudgetData;
+    if (!stored) return sampleBudgetData;
+    try {
+      return normalizeBudgetData(JSON.parse(stored));
+    } catch (error) {
+      console.error("Gespeicherte Budgetdaten konnten nicht gelesen werden.", error);
+      return sampleBudgetData;
+    }
   });
   const [activeTab, setActiveTab] = useState<PlannerTab>("dashboard");
   const [accountDraft, setAccountDraft] =
@@ -427,13 +433,31 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
   const exportJson = JSON.stringify(data, null, 2);
   const exportCsv = [
     "Typ;Name;Betrag;Kategorie;Datum;Person/Haushalt;Status;Wiederholung;Notiz",
-    ...data.incomes.map(
-      (income) =>
-        `Einnahme;${income.name};${income.amount};${income.category};${income.date};${income.personId || "Haushalt"};;${income.repeat};${income.note || ""}`,
+    ...data.incomes.map((income) =>
+      toCsvRow([
+        "Einnahme",
+        income.name,
+        income.amount,
+        income.category,
+        income.date,
+        income.personId || "Haushalt",
+        "",
+        income.repeat,
+        income.note || "",
+      ]),
     ),
-    ...data.expenses.map(
-      (expense) =>
-        `Ausgabe;${expense.name};${expense.amount};${expense.category};${expense.date};${expense.personId || "Haushalt"};${expense.status};${expense.repeat};${expense.note || ""}`,
+    ...data.expenses.map((expense) =>
+      toCsvRow([
+        "Ausgabe",
+        expense.name,
+        expense.amount,
+        expense.category,
+        expense.date,
+        expense.personId || "Haushalt",
+        expense.status,
+        expense.repeat,
+        expense.note || "",
+      ]),
     ),
   ].join("\n");
 
@@ -1197,6 +1221,14 @@ const DayPlanning = ({ summary, data, addQuickExpense, selectedDate }: any) => {
   );
 };
 
+const toCsvField = (value: string | number): string => {
+  const text = String(value);
+  return /[;"\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const toCsvRow = (values: (string | number)[]): string =>
+  values.map(toCsvField).join(";");
+
 const parseInputDate = (dateString: string) => {
   const [year, month, day] = dateString.split("-").map(Number);
   return new Date(year, month - 1, day);
@@ -1264,12 +1296,20 @@ const getNextOccurrenceDate = (expense: Expense, todayDate: Date) => {
   const startDate = parseInputDate(expense.date);
   if (expense.repeat === "once") return startDate >= normalizedToday ? startDate : undefined;
   if (expense.repeat === "monthly") {
-    const next = new Date(
+    const buildMonthlyOccurrence = (year: number, month: number) => {
+      const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+      return new Date(year, month, Math.min(startDate.getDate(), lastDayOfMonth));
+    };
+    let next = buildMonthlyOccurrence(
       normalizedToday.getFullYear(),
       normalizedToday.getMonth(),
-      Math.min(startDate.getDate(), 28),
     );
-    if (next < normalizedToday) next.setMonth(next.getMonth() + 1);
+    if (next < normalizedToday) {
+      next = buildMonthlyOccurrence(
+        normalizedToday.getFullYear(),
+        normalizedToday.getMonth() + 1,
+      );
+    }
     return next;
   }
   if (expense.repeat === "yearly") {

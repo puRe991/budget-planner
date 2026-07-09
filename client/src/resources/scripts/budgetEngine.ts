@@ -275,7 +275,7 @@ function getOccurrenceCountFromToday(
     const occurrence = new Date(
       selectedDate.getFullYear(),
       selectedDate.getMonth(),
-      startDate.getDate(),
+      Math.min(startDate.getDate(), monthEnd.getDate()),
     );
     return startDate.getMonth() === selectedDate.getMonth() &&
       occurrence >= fromDate &&
