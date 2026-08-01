@@ -4,18 +4,38 @@ Eine lokale React-Web-App für die Budgetplanung mehrerer Personen in einem Haus
 
 > Wie viel Geld darf der Haushalt heute und diese Woche noch ausgeben, damit das Geld bis Monatsende reicht?
 
+## Die Monatsende-Garantie
+
+Der Betrag „Heute sicher ausgeben“ ist keine Schätzung, sondern das Ergebnis einer Tag-für-Tag-Simulation:
+
+1. Startpunkt sind die erfassten Kontostände.
+2. Für jeden Tag bis Monatsende werden erwartete Einnahmen dazugerechnet und alle offenen Rechnungen an ihrem Fälligkeitstag abgezogen. Überfällige Rechnungen gelten als sofort fällig.
+3. Pflichtsparen bleibt dauerhaft reserviert.
+4. Frei verfügbar ist der größte Betrag, der an **jedem** Tag ausgegeben werden kann, ohne dass der Kontostand an irgendeinem Tag unter die Reserve fällt:
+
+   ```
+   sicher pro Tag = min über alle Tage i von (Kontostand am Tag i - Reserve) / (Anzahl Tage bis i)
+   ```
+
+Deshalb kann das Tageslimit vor dem Zahltag niedrig sein, obwohl am Monatsende rechnerisch mehr übrig bleibt: Das Geld muss erst bis zum nächsten Geldeingang reichen. Der Wert wird jeden Tag neu berechnet und steigt, sobald erwartete Einnahmen eingegangen sind.
+
+Reicht das Geld nicht, meldet die App die genaue Deckungslücke mit Datum und schlägt konkrete Schritte vor (weniger pro Tag ausgeben, nicht kritische Rechnungen verschieben, Pflichtsparen pausieren).
+
 ## Funktionen
 
-- Dashboard mit aktuellen Kontoständen, Restgeld bis Monatsende, Tagesbudget, Wochenbudget, bezahlten Ausgaben und offenen Fixkosten.
+- Dashboard mit aktuellen Kontoständen, Restgeld bis Monatsende, garantiertem Tages- und Wochenbetrag, bezahlten Ausgaben und offenen Rechnungen.
+- Rechnungs-Assistent (`Rechnungen`) mit Zahlungsplan nach Dringlichkeit (überfällig, heute fällig, diese Woche, später), Deckungs-Check und Liquiditätsverlauf bis Monatsende.
+- Rechnung mit einem Klick bezahlen: Der Betrag wird als bezahlt markiert und direkt vom gewählten Konto abgebucht, damit Kontostand und Planung zusammenbleiben.
+- Warnbanner für überfällige und heute fällige Rechnungen sowie für jede Deckungslücke.
 - Manuell anpassbare Kontostände für Girokonto, Bargeld oder weitere Konten; diese Werte werden für die Budgetprognose genutzt.
 - Personenverwaltung für Einkommen, persönliches freies Budget, Kostenanteil und optionale Sparziele.
 - Erfassung von Einnahmen wie Gehalt, Sozialleistungen, Kindergeld, Unterhalt, Nebenjob, Rückzahlungen und sonstige Einnahmen.
 - Erfassung von Fixkosten und variablen Ausgaben inklusive Status `offen` oder `bezahlt`, Wiederholung, benutzerdefiniertem Intervall wie „alle 3 Tage“ und Notiz.
 - Automatische Monatsende-Berechnung:
-  - Restgeld = aktuelle Kontostände + noch erwartete Einnahmen - offene Pflichtausgaben - verpflichtende Sparziele
-  - Tagesbudget = Restgeld / verbleibende Tage bis Monatsende
-  - Wochenbudget = Tagesbudget × 7
-- Ampel-Warnsystem mit Grün/Gelb/Rot, Prognose zum Aufbrauchdatum, Fehlbetrag und täglichem Sparbedarf.
+  - Restgeld = aktuelle Kontostände + noch erwartete Einnahmen - offene Rechnungen - verpflichtende Sparziele
+  - Sicherer Tagesbetrag = siehe „Monatsende-Garantie“ oben (berücksichtigt jeden einzelnen Fälligkeitstermin)
+  - Wochenbetrag = sicherer Tagesbetrag × 7
+- Ampel-Warnsystem mit Grün/Gelb/Rot: Rot, sobald eine Rechnung nicht gedeckt ist, Gelb bei überfälligen Rechnungen. Die Aufbrauch-Prognose nutzt nur den laufenden variablen Verbrauch, damit bereits bezahlte Fixkosten wie die Miete die Prognose nicht verfälschen.
 - Monats-, Wochen- und Tagesansicht inklusive schneller Ausgabe für heute.
 - Haushaltsrealität-Ansicht mit Kategorie-Umschlägen, Fälligkeiten der nächsten 7 Tage, unregelmäßigen Einnahmen, Verschiebe-Szenarien und Konto-vs.-Plan-Abgleich.
 - Bereiche für Schulden/Raten und Sparziele; Schulden können optional direkt als offene monatliche Fixkosten in das Budget übernommen werden.
@@ -73,15 +93,16 @@ Beim nächsten Windows-Login startet das Skript `npm run dev` im Projektordner u
 
 ## Beispieldaten
 
-Die App startet mit Beispieldaten für zwei Personen, 2.500 € Monatseinnahmen, bezahlten Fixkosten, bereits variablen Ausgaben und offenen Pflichtausgaben. Am 15. Mai 2026 bleiben inklusive Starttag 17 Tage bis Monatsende, sodass die Kernberechnung direkt überprüfbar ist.
+Die App startet mit Beispieldaten für zwei Personen, 2.500 € Monatseinnahmen, bezahlten Fixkosten, bereits variablen Ausgaben und offenen Pflichtausgaben. Am 15. Mai 2026 bleiben inklusive Starttag 17 Tage bis Monatsende: 1.000 € auf den Konten, 120 € Strom heute und 80 € Versicherung am 20. fällig - es bleiben 800 € für 17 Tage, also 47,06 € pro Tag.
 
 Für einen produktiven Erststart sollte nach der Funktionsprüfung ein eigener Datenstand aufgebaut bzw. ein eigener JSON-Backup-Stand importiert werden.
 
 ## Architektur
 
-- `server/app.py` enthält die Python/Flask-API für Status, Notion-Daten und Budget-Zusammenfassungen.
+- `server/app.py` enthält die Python/Flask-API für Status, Notion-Daten, Budget-Zusammenfassungen (`POST /api/budget/summary`) und den Zahlungsplan (`POST /api/budget/payment-plan`).
 - `server/notion.py` enthält die Notion-Abfrage inklusive Pagination, Validierung und Normalisierung.
-- `budget_planner/budget_engine.py` enthält die in Python übernommene Budgetlogik mit Datenmodell-Hilfsfunktionen, Beispieldaten und testbaren Berechnungsfunktionen.
-- `client/src/resources/scripts/budgetEngine.ts` enthält weiterhin die clientseitige Budgetlogik für die React-Oberfläche.
+- `budget_planner/budget_engine.py` enthält die in Python übernommene Budgetlogik inklusive `build_bill_schedule`, `build_payment_plan` (Liquiditätsverlauf und Monatsende-Garantie), Beispieldaten und testbaren Berechnungsfunktionen.
+- `client/src/resources/scripts/budgetEngine.ts` enthält die identische clientseitige Budgetlogik für die React-Oberfläche.
+- `tests/test_budget_engine.py` sichert die Kernrechnungen ab: Deckung aller Rechnungen, Engpass vor dem Zahltag, Deckungslücke, überfällige Rechnungen und reserviertes Pflichtsparen (`python -m pytest tests`).
 - `client/src/components/householdPlanner/HouseholdPlanner.tsx` enthält die produktive Oberfläche für Dashboard, Personen, Einnahmen, Ausgaben, Monats-, Wochen-, Tagesansicht, Schulden, Sparziele und Import/Export.
 - `client/src/components/householdPlanner/householdPlanner.scss` enthält das mobile, kartenbasierte Finanz-UX-Design.
