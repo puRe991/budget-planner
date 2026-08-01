@@ -43,6 +43,22 @@ Reicht das Geld nicht, meldet die App die genaue Deckungslücke mit Datum und sc
 - Manueller CSV-Export, JSON-Backup, JSON-Import und PDF-Export über die Browserfunktion „Drucken → Als PDF speichern“.
 - Sofortige lokale Speicherung im Browser (`localStorage`) nach jeder Änderung, keine versteckten Tracking-Funktionen.
 
+## Start unter Windows (empfohlen)
+
+Im Projektordner **`start-budget-planner.cmd` doppelklicken**. Mehr ist nicht nötig.
+
+Das Skript richtet beim ersten Start alles selbst ein und startet danach die App:
+
+1. prüft, ob Python und Node.js installiert sind,
+2. legt die virtuelle Python-Umgebung `.venv` an,
+3. installiert die Python-Abhängigkeiten,
+4. installiert die Client-Abhängigkeiten (`client/node_modules`),
+5. startet Server und Oberfläche; der Browser öffnet sich automatisch auf <http://localhost:3000>.
+
+Beim ersten Start dauern die Schritte 3 und 4 einige Minuten. Ab dem zweiten Start werden bereits vorhandene Teile übersprungen und die App startet direkt. Fehlt Python oder Node.js, nennt das Skript die Download-Adresse, statt mit einem Traceback abzubrechen.
+
+Zum Beenden `Strg + C` drücken oder das Fenster schließen.
+
 ## Lokale Entwicklung
 
 ```bash
@@ -93,11 +109,11 @@ npm run build --prefix client
 
 Das Projekt kann Windows nicht ungefragt in den Autostart schreiben. Dafür liegt ein Starter-Skript bei:
 
-1. Einmal `scripts\windows-autostart-budget-planner.cmd` testen.
+1. Einmal `start-budget-planner.cmd` doppelklicken und prüfen, dass die App startet.
 2. Mit `Win + R` den Ordner `shell:startup` öffnen.
 3. Eine Verknüpfung zu `scripts\windows-autostart-budget-planner.cmd` in diesen Autostart-Ordner legen.
 
-Beim nächsten Windows-Login startet das Skript `npm run dev` im Projektordner und öffnet danach `http://localhost:3000`.
+Beim nächsten Windows-Login öffnet das Autostart-Skript ein Fenster und ruft darin `start-budget-planner.cmd` auf. Beide Wege nutzen also dieselbe Einrichtung und können nicht auseinanderlaufen.
 
 ## Beispieldaten
 
