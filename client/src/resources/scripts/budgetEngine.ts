@@ -121,6 +121,50 @@ export interface PersonBudget {
   dailyBudget: number;
 }
 
+export type BillUrgency = "overdue" | "today" | "soon" | "later";
+
+export interface BillOccurrence {
+  key: string;
+  expenseId: string;
+  name: string;
+  amount: number;
+  dueDate: Date;
+  category: string;
+  kind: ExpenseKind;
+  critical: boolean;
+  note?: string;
+  daysUntilDue: number;
+  urgency: BillUrgency;
+}
+
+export interface LiquidityDay {
+  date: Date;
+  income: number;
+  bills: number;
+  billNames: string[];
+  balance: number;
+}
+
+export interface PaymentPlan {
+  bills: BillOccurrence[];
+  overdue: BillOccurrence[];
+  dueToday: BillOccurrence[];
+  dueNext7Days: BillOccurrence[];
+  billsTotal: number;
+  criticalTotal: number;
+  openingBalance: number;
+  reserve: number;
+  days: LiquidityDay[];
+  lowestBalance: number;
+  lowestBalanceDate?: Date;
+  shortfall: number;
+  shortfallDate?: Date;
+  allBillsCovered: boolean;
+  safeToSpendPerDay: number;
+  safeToSpendTotal: number;
+  actions: string[];
+}
+
 export interface BudgetSummary {
   monthStart: Date;
   monthEnd: Date;
@@ -142,6 +186,7 @@ export interface BudgetSummary {
   dailyBudget: number;
   weeklyBudget: number;
   averageDailySpendSoFar: number;
+  averageVariableDailySpend: number;
   projectedRunOutDate?: Date;
   savingsNeededPerDay: number;
   missingMoney: number;
@@ -150,6 +195,13 @@ export interface BudgetSummary {
   statusText: string;
   personBudgets: PersonBudget[];
   spendingCuts: string[];
+  paymentPlan: PaymentPlan;
+  safeToSpendPerDay: number;
+  safeToSpendPerWeek: number;
+  allBillsCovered: boolean;
+  billShortfall: number;
+  billShortfallDate?: Date;
+  nextBill?: BillOccurrence;
 }
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -184,8 +236,26 @@ export function calculateRemainingDaysInMonth(
   );
 }
 
+/**
+ * Liest Datumswerte immer als lokalen Kalendertag.
+ * `new Date("2026-05-03")` wäre UTC-Mitternacht und könnte je nach Zeitzone
+ * einen Tag zurückspringen - das würde Fälligkeiten und Budgets verschieben.
+ */
+export function parseDateValue(value: string | Date): Date {
+  if (value instanceof Date) return normalizeDate(value);
+  const isoDayMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (isoDayMatch) {
+    return new Date(
+      Number(isoDayMatch[1]),
+      Number(isoDayMatch[2]) - 1,
+      Number(isoDayMatch[3]),
+    );
+  }
+  return normalizeDate(new Date(value));
+}
+
 function isSameMonth(dateString: string, selectedDate: Date): boolean {
-  const date = new Date(dateString);
+  const date = parseDateValue(dateString);
   return (
     date.getFullYear() === selectedDate.getFullYear() &&
     date.getMonth() === selectedDate.getMonth()
@@ -196,13 +266,23 @@ function normalizeDate(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+function differenceInDays(from: Date, to: Date): number {
+  return Math.round(
+    (normalizeDate(to).getTime() - normalizeDate(from).getTime()) / dayMs,
+  );
+}
+
 function getMonthlyOccurrenceCount(
   dateString: string,
   repeat: RepeatType,
   selectedDate: Date,
   intervalDays = 1,
 ): number {
-  const startDate = normalizeDate(new Date(dateString));
+  const startDate = parseDateValue(dateString);
   const monthStart = getMonthStart(selectedDate);
   const monthEnd = getMonthEnd(selectedDate);
 
@@ -266,7 +346,7 @@ function getOccurrenceCountFromToday(
       : selectedMonthStart;
 
   if (fromDate > monthEnd) return 0;
-  const startDate = normalizeDate(new Date(dateString));
+  const startDate = parseDateValue(dateString);
   if (repeat === "once")
     return isSameMonth(dateString, selectedDate) && startDate >= fromDate
       ? 1
@@ -347,6 +427,68 @@ function occursFromToday(
       intervalDays,
     ) > 0
   );
+}
+
+/**
+ * Alle konkreten Termine eines Eintrags im gewählten Monat.
+ * Die Anzahl entspricht exakt `getMonthlyOccurrenceCount`, damit Summen und
+ * Fälligkeitsliste nie auseinanderlaufen.
+ */
+export function getMonthlyOccurrenceDates(
+  item: Pick<Income | Expense, "date" | "repeat" | "intervalDays">,
+  selectedDate: Date,
+): Date[] {
+  const startDate = parseDateValue(item.date);
+  const monthStart = getMonthStart(selectedDate);
+  const monthEnd = getMonthEnd(selectedDate);
+
+  if (item.repeat === "once")
+    return isSameMonth(item.date, selectedDate) ? [startDate] : [];
+
+  if (item.repeat === "yearly") {
+    if (startDate.getMonth() !== selectedDate.getMonth() || startDate > monthEnd)
+      return [];
+    return [
+      new Date(
+        selectedDate.getFullYear(),
+        selectedDate.getMonth(),
+        Math.min(startDate.getDate(), monthEnd.getDate()),
+      ),
+    ];
+  }
+
+  if (startDate > monthEnd) return [];
+
+  if (item.repeat === "monthly") {
+    const occurrence = new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      Math.min(startDate.getDate(), monthEnd.getDate()),
+    );
+    return occurrence >= monthStart && occurrence >= startDate
+      ? [occurrence]
+      : [];
+  }
+
+  const step =
+    item.repeat === "weekly"
+      ? 7
+      : item.repeat === "custom"
+        ? Math.max(1, item.intervalDays || 1)
+        : 1;
+  const dates: Date[] = [];
+  let current =
+    startDate < monthStart
+      ? addDays(
+          startDate,
+          Math.ceil(differenceInDays(startDate, monthStart) / step) * step,
+        )
+      : startDate;
+  while (current <= monthEnd) {
+    dates.push(current);
+    current = addDays(current, step);
+  }
+  return dates;
 }
 
 function sum(values: number[]): number {
@@ -457,15 +599,17 @@ export function calculateVariableExpenses(
   );
 }
 
+/**
+ * Alle noch offenen Rechnungen des Monats - bewusst inklusive offener
+ * variabler Ausgaben, damit nichts Unbezahltes aus der Reserve fällt.
+ */
 export function calculateOpenBills(
   data: HouseholdBudgetData,
   selectedDate: Date,
 ): number {
   return sum(
     getMonthlyExpenses(data.expenses, selectedDate)
-      .filter(
-        (expense) => expense.status === "open" && expense.kind === "fixed",
-      )
+      .filter((expense) => expense.status === "open")
       .map((expense) => getMonthlyAmount(expense, selectedDate)),
   );
 }
@@ -519,6 +663,316 @@ export function calculateSavingsNeededPerDay(
   return remainingMoney >= 0 || remainingDays <= 0
     ? 0
     : roundMoney(Math.abs(remainingMoney) / remainingDays);
+}
+
+function getUrgency(daysUntilDue: number): BillUrgency {
+  if (daysUntilDue < 0) return "overdue";
+  if (daysUntilDue === 0) return "today";
+  if (daysUntilDue <= 7) return "soon";
+  return "later";
+}
+
+/**
+ * Baut aus allen offenen Ausgaben eine Liste konkreter Fälligkeiten
+ * im gewählten Monat - überfällige zuerst.
+ */
+export function buildBillSchedule(
+  data: HouseholdBudgetData,
+  selectedDate: Date,
+  today: Date = new Date(),
+): BillOccurrence[] {
+  const normalizedToday = normalizeDate(today);
+  const bills: BillOccurrence[] = [];
+
+  data.expenses
+    .filter((expense) => expense.status === "open")
+    .forEach((expense) => {
+      getMonthlyOccurrenceDates(expense, selectedDate).forEach((dueDate) => {
+        const daysUntilDue = differenceInDays(normalizedToday, dueDate);
+        bills.push({
+          key: `${expense.id}-${toDateInputValue(dueDate)}`,
+          expenseId: expense.id,
+          name: expense.name,
+          amount: roundMoney(expense.amount),
+          dueDate,
+          category: expense.category,
+          kind: expense.kind,
+          critical: Boolean(expense.critical),
+          note: expense.note,
+          daysUntilDue,
+          urgency: getUrgency(daysUntilDue),
+        });
+      });
+    });
+
+  return bills.sort(
+    (a, b) =>
+      a.dueDate.getTime() - b.dueDate.getTime() ||
+      Number(b.critical) - Number(a.critical) ||
+      b.amount - a.amount,
+  );
+}
+
+/**
+ * Noch erwartete Einnahmen mit konkretem Eingangsdatum.
+ * Bereits eingegangene Einnahmen zählen nur für zukünftige Termine, weil der
+ * heutige Eingang schon im Kontostand steckt.
+ */
+export function buildIncomeSchedule(
+  data: HouseholdBudgetData,
+  selectedDate: Date,
+  fromDate: Date,
+): { date: Date; amount: number }[] {
+  const entries: { date: Date; amount: number }[] = [];
+  data.incomes
+    .filter((income) => income.expectationStatus !== "uncertain")
+    .forEach((income) => {
+      const earliest =
+        income.expectationStatus === "received"
+          ? addDays(fromDate, 1)
+          : fromDate;
+      getMonthlyOccurrenceDates(income, selectedDate)
+        .filter((date) => date >= earliest)
+        .forEach((date) => entries.push({ date, amount: income.amount }));
+    });
+  return entries;
+}
+
+/**
+ * Der Kern der Monatsende-Garantie.
+ *
+ * Simuliert Tag für Tag den Kontostand aus Startguthaben, erwarteten Einnahmen
+ * und offenen Rechnungen. Daraus folgt der Betrag, der jeden Tag frei ausgegeben
+ * werden darf, ohne dass an irgendeinem Tag bis Monatsende eine Rechnung platzt:
+ *
+ *   sicherProTag = min über alle Tage i von
+ *                  (Kontostand am Tag i - Reserve) / (Anzahl Tage bis i)
+ */
+export function getPlanningStartDate(selectedDate: Date, today: Date): Date {
+  const normalizedToday = normalizeDate(today);
+  const monthStart = getMonthStart(selectedDate);
+  const monthEnd = getMonthEnd(selectedDate);
+  const isCurrentMonth =
+    selectedDate.getFullYear() === normalizedToday.getFullYear() &&
+    selectedDate.getMonth() === normalizedToday.getMonth();
+  if (!isCurrentMonth) return monthStart;
+  return normalizedToday > monthEnd ? monthEnd : normalizedToday;
+}
+
+export function buildPaymentPlan(
+  data: HouseholdBudgetData,
+  selectedDate: Date,
+  today: Date = new Date(),
+  openingBalance?: number,
+): PaymentPlan {
+  const monthEnd = getMonthEnd(selectedDate);
+  const fromDate = getPlanningStartDate(selectedDate, today);
+
+  const bills = buildBillSchedule(data, selectedDate, today);
+  const billsTotal = sum(bills.map((bill) => bill.amount));
+  const criticalTotal = sum(
+    bills.filter((bill) => bill.critical).map((bill) => bill.amount),
+  );
+  const reserve = sum(
+    data.savingsGoals
+      .filter((goal) => goal.mandatory)
+      .map((goal) => goal.monthlyAmount),
+  );
+
+  const accountTotal = sum((data.accounts || []).map((a) => a.balance));
+  const start =
+    openingBalance !== undefined ? openingBalance : roundMoney(accountTotal);
+
+  const incomeEntries = buildIncomeSchedule(data, selectedDate, fromDate);
+  const dayCount = Math.max(1, differenceInDays(fromDate, monthEnd) + 1);
+
+  const days: LiquidityDay[] = [];
+  let balance = start;
+  let safeToSpendPerDay = Number.POSITIVE_INFINITY;
+  let lowestBalance = Number.POSITIVE_INFINITY;
+  let lowestBalanceDate: Date | undefined;
+  let shortfall = 0;
+  let shortfallDate: Date | undefined;
+
+  for (let index = 0; index < dayCount; index += 1) {
+    const date = addDays(fromDate, index);
+    // Überfällige Rechnungen sind sofort fällig und landen auf dem ersten Tag.
+    const dayBills = bills.filter((bill) =>
+      index === 0
+        ? bill.dueDate <= date
+        : differenceInDays(bill.dueDate, date) === 0,
+    );
+    const dayIncome = sum(
+      incomeEntries
+        .filter((entry) => differenceInDays(entry.date, date) === 0)
+        .map((entry) => entry.amount),
+    );
+    const dayBillTotal = sum(dayBills.map((bill) => bill.amount));
+
+    balance = roundMoney(balance + dayIncome - dayBillTotal);
+    days.push({
+      date,
+      income: dayIncome,
+      bills: dayBillTotal,
+      billNames: dayBills.map((bill) => bill.name),
+      balance,
+    });
+
+    const spendable = roundMoney(balance - reserve);
+    if (spendable < lowestBalance) {
+      lowestBalance = spendable;
+      lowestBalanceDate = date;
+    }
+    if (spendable < 0 && shortfallDate === undefined) {
+      shortfallDate = date;
+    }
+    safeToSpendPerDay = Math.min(safeToSpendPerDay, spendable / (index + 1));
+  }
+
+  if (lowestBalance === Number.POSITIVE_INFINITY) lowestBalance = 0;
+  if (safeToSpendPerDay === Number.POSITIVE_INFINITY) safeToSpendPerDay = 0;
+  if (lowestBalance < 0) shortfall = roundMoney(Math.abs(lowestBalance));
+
+  const allBillsCovered = shortfall === 0;
+  const safePerDay = roundMoney(Math.max(0, safeToSpendPerDay));
+
+  const overdue = bills.filter((bill) => bill.urgency === "overdue");
+  const dueToday = bills.filter((bill) => bill.urgency === "today");
+  const dueNext7Days = bills.filter((bill) => bill.urgency === "soon");
+
+  return {
+    bills,
+    overdue,
+    dueToday,
+    dueNext7Days,
+    billsTotal,
+    criticalTotal,
+    openingBalance: start,
+    reserve,
+    days,
+    lowestBalance: roundMoney(lowestBalance),
+    lowestBalanceDate,
+    shortfall,
+    shortfallDate,
+    allBillsCovered,
+    safeToSpendPerDay: safePerDay,
+    safeToSpendTotal: roundMoney(safePerDay * dayCount),
+    actions: buildPaymentActions({
+      bills,
+      overdue,
+      dueToday,
+      shortfall,
+      shortfallDate,
+      safePerDay,
+      dayCount,
+      data,
+      hasAccounts: (data.accounts || []).length > 0,
+    }),
+  };
+}
+
+function buildPaymentActions({
+  bills,
+  overdue,
+  dueToday,
+  shortfall,
+  shortfallDate,
+  safePerDay,
+  dayCount,
+  data,
+  hasAccounts,
+}: {
+  bills: BillOccurrence[];
+  overdue: BillOccurrence[];
+  dueToday: BillOccurrence[];
+  shortfall: number;
+  shortfallDate?: Date;
+  safePerDay: number;
+  dayCount: number;
+  data: HouseholdBudgetData;
+  hasAccounts: boolean;
+}): string[] {
+  const actions: string[] = [];
+  const formatMoney = (value: number) =>
+    `${roundMoney(value).toLocaleString("de-DE", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} €`;
+
+  if (!hasAccounts) {
+    actions.push(
+      "Trage unter „Kontostände“ dein Girokonto und Bargeld ein. Erst dann kann die Software garantieren, dass das Geld bis Monatsende reicht.",
+    );
+  }
+
+  if (overdue.length > 0) {
+    actions.push(
+      `${describeBillCount(overdue.length, "überfällige")} über ${formatMoney(
+        overdue.reduce((total, bill) => total + bill.amount, 0),
+      )} zuerst bezahlen: ${overdue.map((bill) => bill.name).join(", ")}.`,
+    );
+  }
+
+  if (dueToday.length > 0) {
+    actions.push(
+      `Heute fällig: ${dueToday
+        .map((bill) => `${bill.name} (${formatMoney(bill.amount)})`)
+        .join(", ")}.`,
+    );
+  }
+
+  if (shortfall > 0) {
+    actions.push(
+      `Achtung: Am ${shortfallDate?.toLocaleDateString("de-DE")} fehlen ${formatMoney(
+        shortfall,
+      )}, damit alle Rechnungen bezahlt werden können.`,
+    );
+    // Bei einer Deckungslücke steht der sichere Tagesbetrag bereits auf 0 €.
+    // „Weniger ausgeben“ wäre hier ein leerer Rat.
+    actions.push(
+      "Sparen beim Alltag reicht dafür nicht - der sichere Tagesbetrag liegt schon bei 0 €. Nötig sind Zahlungsaufschub, Ratenzahlung oder zusätzliche Einnahmen.",
+    );
+    const shiftable = bills
+      .filter((bill) => !bill.critical)
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 3);
+    if (shiftable.length > 0) {
+      actions.push(
+        `Nicht kritische Rechnungen zum Verschieben oder Teilzahlen: ${shiftable
+          .map((bill) => `${bill.name} (${formatMoney(bill.amount)})`)
+          .join(", ")}.`,
+      );
+    }
+    const savings = data.savingsGoals.filter((goal) => goal.mandatory);
+    if (savings.length > 0) {
+      actions.push(
+        `Pflichtsparen diesen Monat pausieren würde ${formatMoney(
+          savings.reduce((total, goal) => total + goal.monthlyAmount, 0),
+        )} freigeben.`,
+      );
+    }
+  } else if (bills.length === 0) {
+    actions.push(
+      `Aktuell ist keine Rechnung offen. Frei verfügbar: ${formatMoney(safePerDay)} pro Tag.`,
+    );
+  } else {
+    actions.push(
+      `${
+        bills.length === 1
+          ? "Die offene Rechnung ist"
+          : `Alle ${bills.length} offenen Rechnungen sind`
+      } bis Monatsende gedeckt. Frei verfügbar: ${formatMoney(safePerDay)} pro Tag.`,
+    );
+  }
+
+  return actions;
+}
+
+/** „1 überfällige Rechnung“ statt „1 überfällige Rechnung(en)“. */
+export function describeBillCount(count: number, adjective = "offene"): string {
+  return count === 1
+    ? `1 ${adjective} Rechnung`
+    : `${count} ${adjective}n Rechnungen`;
 }
 
 export function calculatePersonBudget(
@@ -638,9 +1092,22 @@ export function calculateHouseholdBudget(
     Math.floor((today.getTime() - monthStart.getTime()) / dayMs) + 1,
   );
   const averageDailySpendSoFar = roundMoney(paidExpenses / elapsedDays);
+  // Für die Hochrechnung zählt nur der laufende variable Verbrauch. Bereits bezahlte
+  // Fixkosten wie die Miete fallen diesen Monat nicht noch einmal an und würden die
+  // Prognose sonst jeden Monat grundlos auf Rot ziehen.
+  const paidVariableExpenses = sum(
+    monthlyExpenses
+      .filter(
+        (expense) => expense.status === "paid" && expense.kind === "variable",
+      )
+      .map((expense) => getMonthlyAmount(expense, selectedDate)),
+  );
+  const averageVariableDailySpend = roundMoney(
+    paidVariableExpenses / elapsedDays,
+  );
   const projectedRunOutDate = calculateProjectedRunOutDate(
     remainingMoney,
-    averageDailySpendSoFar,
+    averageVariableDailySpend,
     today,
     monthEnd,
   );
@@ -652,7 +1119,7 @@ export function calculateHouseholdBudget(
     remainingMoney < 0
       ? Math.abs(remainingMoney)
       : projectedRunOutDate
-        ? roundMoney((averageDailySpendSoFar - dailyBudget) * remainingDays)
+        ? roundMoney((averageVariableDailySpend - dailyBudget) * remainingDays)
         : 0;
   const missingDays = projectedRunOutDate
     ? Math.max(
@@ -660,10 +1127,29 @@ export function calculateHouseholdBudget(
         Math.ceil((monthEnd.getTime() - projectedRunOutDate.getTime()) / dayMs),
       )
     : 0;
+  const hasAccounts = Boolean(data.accounts && data.accounts.length > 0);
+  const planningStart = getPlanningStartDate(selectedDate, today);
+  // Ohne erfasste Konten wird der Monat rein aus dem Plan simuliert: Startwert
+  // sind die Einnahmen abzüglich bereits bezahlter Ausgaben und noch
+  // ausstehender Einnahmen, die der Zeitstrahl selbst wieder zubucht.
+  const scheduledIncomeTotal = sum(
+    buildIncomeSchedule(data, selectedDate, planningStart).map(
+      (entry) => entry.amount,
+    ),
+  );
+  const paymentPlan = buildPaymentPlan(
+    data,
+    selectedDate,
+    today,
+    hasAccounts
+      ? accountBalanceTotal
+      : roundMoney(totalIncome - paidExpenses - scheduledIncomeTotal),
+  );
   const status = calculateBudgetStatus(
     remainingMoney,
     dailyBudget,
     projectedRunOutDate,
+    paymentPlan,
   );
 
   return {
@@ -687,6 +1173,7 @@ export function calculateHouseholdBudget(
     dailyBudget,
     weeklyBudget,
     averageDailySpendSoFar,
+    averageVariableDailySpend,
     projectedRunOutDate,
     savingsNeededPerDay:
       savingsNeededPerDay ||
@@ -694,9 +1181,16 @@ export function calculateHouseholdBudget(
     missingMoney: roundMoney(Math.max(0, missingMoney)),
     missingDays,
     status,
-    statusText: getBudgetStatusText(status, projectedRunOutDate),
+    statusText: getBudgetStatusText(status, projectedRunOutDate, paymentPlan),
     personBudgets: calculatePersonBudget(data, selectedDate, remainingDays),
     spendingCuts: buildSpendingCutSuggestions(monthlyExpenses),
+    paymentPlan,
+    safeToSpendPerDay: paymentPlan.safeToSpendPerDay,
+    safeToSpendPerWeek: roundMoney(paymentPlan.safeToSpendPerDay * 7),
+    allBillsCovered: paymentPlan.allBillsCovered,
+    billShortfall: paymentPlan.shortfall,
+    billShortfallDate: paymentPlan.shortfallDate,
+    nextBill: paymentPlan.bills[0],
   };
 }
 
@@ -704,8 +1198,12 @@ export function calculateBudgetStatus(
   remainingMoney: number,
   dailyBudget: number,
   projectedRunOutDate?: Date,
+  paymentPlan?: PaymentPlan,
 ): BudgetStatus {
+  // Eine ungedeckte Rechnung ist immer rot - egal wie gut der Monat sonst aussieht.
+  if (paymentPlan && !paymentPlan.allBillsCovered) return "red";
   if (remainingMoney < 0 || projectedRunOutDate) return "red";
+  if (paymentPlan && paymentPlan.overdue.length > 0) return "yellow";
   if (dailyBudget < 10) return "yellow";
   return "green";
 }
@@ -713,10 +1211,22 @@ export function calculateBudgetStatus(
 function getBudgetStatusText(
   status: BudgetStatus,
   projectedRunOutDate?: Date,
+  paymentPlan?: PaymentPlan,
 ): string {
-  if (status === "green") return "Geld reicht voraussichtlich bis Monatsende.";
+  if (paymentPlan && !paymentPlan.allBillsCovered) {
+    return `Am ${paymentPlan.shortfallDate?.toLocaleDateString(
+      "de-DE",
+    )} fehlen ${roundMoney(paymentPlan.shortfall).toLocaleString("de-DE", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} € für offene Rechnungen.`;
+  }
+  if (status === "green")
+    return "Alle Rechnungen sind gedeckt, das Geld reicht bis Monatsende.";
   if (status === "yellow")
-    return "Geld reicht knapp. Bitte vorsichtig ausgeben.";
+    return paymentPlan && paymentPlan.overdue.length > 0
+      ? `${paymentPlan.overdue.length} überfällige Rechnung(en) - bitte zuerst bezahlen.`
+      : "Geld reicht knapp. Bitte vorsichtig ausgeben.";
   return projectedRunOutDate
     ? `Geld reicht voraussichtlich nur bis ${projectedRunOutDate.toLocaleDateString("de-DE")}.`
     : "Geld reicht voraussichtlich nicht bis Monatsende.";

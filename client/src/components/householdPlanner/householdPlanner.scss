@@ -269,3 +269,161 @@
 		}
 	}
 }
+
+// Zahlungsassistent: Fälligkeiten, Deckungs-Check und Liquiditätsverlauf.
+.planner {
+	&__heroAction {
+		justify-self: start;
+		margin-top: gridSpacing(1);
+		background: rgba(255, 255, 255, .16);
+	}
+
+	&__alert {
+		display: block;
+		width: 100%;
+		text-align: left;
+		border-radius: 16px;
+		padding: gridSpacing(2);
+		margin-bottom: gridSpacing(3);
+		font-weight: 700;
+		line-height: 1.4;
+
+		&--warn {
+			background: rgba(251, 191, 36, .16);
+			border: 1px solid #fbbf24;
+			color: #fde68a;
+		}
+
+		&--danger {
+			background: rgba(239, 93, 94, .16);
+			border: 1px solid $red;
+			color: #fecaca;
+		}
+	}
+
+	&__coverage {
+		h2 { margin-top: 0; }
+
+		p {
+			margin: 0 0 gridSpacing(1);
+			color: #d7d9e5;
+			line-height: 1.6;
+		}
+
+		// Fließtext statt der großen Kennzahlen-Typografie der Karten.
+		p strong {
+			display: inline;
+			font-family: $mono;
+			font-size: inherit;
+		}
+
+		&--ok { border-color: $green; }
+		&--gap { border-color: $red; }
+	}
+
+	&__actions {
+		margin: gridSpacing(1) 0 0;
+		padding-left: gridSpacing(2);
+		display: grid;
+		gap: gridSpacing(1);
+		color: #d7d9e5;
+		line-height: 1.5;
+	}
+
+	&__billGroup {
+		margin-bottom: gridSpacing(2);
+
+		h3 {
+			margin: gridSpacing(2) 0 0;
+			font-size: 14px;
+			text-transform: uppercase;
+			letter-spacing: .12em;
+			color: #aeb4c5;
+		}
+	}
+
+	&__bill {
+		grid-template-columns: 1fr auto auto auto;
+
+		@media only screen and (max-width: 650px) {
+			grid-template-columns: 1fr;
+		}
+
+		strong {
+			display: block;
+			font-family: $sans;
+			font-size: 18px;
+		}
+
+		&--overdue { border-left: 4px solid $red; padding-left: gridSpacing(1); }
+		&--today { border-left: 4px solid #fbbf24; padding-left: gridSpacing(1); }
+		&--soon { border-left: 4px solid #38bdf8; padding-left: gridSpacing(1); }
+		&--later { border-left: 4px solid $grey-3; padding-left: gridSpacing(1); }
+	}
+
+	&__billAmount {
+		font-family: $mono;
+		font-size: 18px;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	&__timeline {
+		display: grid;
+		gap: 6px;
+		max-height: 460px;
+		overflow-y: auto;
+		padding-right: gridSpacing(1);
+	}
+
+	&__timelineDay {
+		display: grid;
+		grid-template-columns: 56px minmax(60px, 1fr) 92px;
+		grid-template-areas: "date bar value" ". note note";
+		gap: gridSpacing(1);
+		align-items: center;
+		padding: 4px 0;
+		border-bottom: 1px solid rgba(56, 58, 67, .5);
+
+		&--negative {
+			.planner__timelineBar span { background: $red; }
+			.planner__timelineValue { color: $red; }
+		}
+	}
+
+	&__timelineDate {
+		grid-area: date;
+		font-family: $mono;
+		font-size: 12px;
+		color: #aeb4c5;
+	}
+
+	&__timelineBar {
+		grid-area: bar;
+		display: block;
+		height: 10px;
+		border-radius: 999px;
+		background: #20222b;
+		overflow: hidden;
+
+		span {
+			display: block;
+			height: 100%;
+			border-radius: inherit;
+			background: $green;
+		}
+	}
+
+	&__timelineValue {
+		grid-area: value;
+		font-family: $mono;
+		font-size: 13px;
+		text-align: right;
+	}
+
+	&__timelineNote {
+		grid-area: note;
+		color: #aeb4c5;
+		font-size: 12px;
+	}
+}

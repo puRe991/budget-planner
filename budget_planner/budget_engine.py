@@ -133,6 +133,39 @@ def get_occurrence_count_from_today(
     return floor((month_end - first).days / days) + 1
 
 
+def get_monthly_occurrence_dates(item: dict[str, Any], selected_date: date | datetime) -> list[date]:
+    """Alle konkreten Termine eines Eintrags im gewählten Monat.
+
+    Die Anzahl entspricht exakt ``get_monthly_occurrence_count``, damit Summen
+    und Fälligkeitsliste nie auseinanderlaufen.
+    """
+    start_date = parse_date(item["date"])
+    selected = parse_date(selected_date)
+    month_start = get_month_start(selected)
+    month_end = get_month_end(selected)
+    repeat = item.get("repeat", "once")
+
+    if repeat == "once":
+        return [start_date] if is_same_month(item["date"], selected) else []
+    if repeat == "yearly":
+        if start_date.month != selected.month or start_date > month_end:
+            return []
+        return [date(selected.year, selected.month, min(start_date.day, month_end.day))]
+    if start_date > month_end:
+        return []
+    if repeat == "monthly":
+        occurrence = date(selected.year, selected.month, min(start_date.day, month_end.day))
+        return [occurrence] if occurrence >= month_start and occurrence >= start_date else []
+
+    step = _interval_days(repeat, item.get("intervalDays") or 1)
+    current = start_date + timedelta(days=ceil((month_start - start_date).days / step) * step) if start_date < month_start else start_date
+    dates: list[date] = []
+    while current <= month_end:
+        dates.append(current)
+        current = current + timedelta(days=step)
+    return dates
+
+
 def money_sum(values: Iterable[float | int]) -> float:
     return round_money(sum(float(value or 0) for value in values))
 
@@ -174,12 +207,222 @@ def calculate_projected_run_out_date(remaining_money: float, average_daily_spend
     return run_out if run_out < month_end else None
 
 
-def calculate_budget_status(remaining_money: float, daily_budget: float, projected_run_out_date: date | None = None) -> BudgetStatus:
+def calculate_budget_status(
+    remaining_money: float,
+    daily_budget: float,
+    projected_run_out_date: date | None = None,
+    payment_plan: dict[str, Any] | None = None,
+) -> BudgetStatus:
+    # Eine ungedeckte Rechnung ist immer rot - egal wie gut der Monat sonst aussieht.
+    if payment_plan and not payment_plan["allBillsCovered"]:
+        return "red"
     if remaining_money < 0 or projected_run_out_date:
         return "red"
+    if payment_plan and payment_plan["overdue"]:
+        return "yellow"
     if daily_budget < 10:
         return "yellow"
     return "green"
+
+
+def _bill_urgency(days_until_due: int) -> str:
+    if days_until_due < 0:
+        return "overdue"
+    if days_until_due == 0:
+        return "today"
+    if days_until_due <= 7:
+        return "soon"
+    return "later"
+
+
+def build_bill_schedule(data: dict[str, Any], selected_date: date | datetime, today: date | datetime | None = None) -> list[dict[str, Any]]:
+    """Konkrete Fälligkeiten aller offenen Ausgaben im gewählten Monat."""
+    current_day = parse_date(today or datetime.now())
+    bills: list[dict[str, Any]] = []
+    for expense in data.get("expenses", []):
+        if expense.get("status") != "open":
+            continue
+        for due_date in get_monthly_occurrence_dates(expense, selected_date):
+            days_until_due = (due_date - current_day).days
+            bills.append({
+                "key": f"{expense.get('id')}-{due_date.isoformat()}",
+                "expenseId": expense.get("id"),
+                "name": expense.get("name", ""),
+                "amount": round_money(expense.get("amount") or 0),
+                "dueDate": due_date.isoformat(),
+                "category": expense.get("category", ""),
+                "kind": expense.get("kind", "variable"),
+                "critical": bool(expense.get("critical")),
+                "note": expense.get("note", ""),
+                "daysUntilDue": days_until_due,
+                "urgency": _bill_urgency(days_until_due),
+            })
+    bills.sort(key=lambda bill: (bill["dueDate"], not bill["critical"], -bill["amount"]))
+    return bills
+
+
+def build_income_schedule(data: dict[str, Any], selected_date: date | datetime, from_date: date) -> list[dict[str, Any]]:
+    """Noch erwartete Einnahmen mit konkretem Eingangsdatum.
+
+    Bereits eingegangene Einnahmen zählen nur für zukünftige Termine, weil der
+    heutige Eingang schon im Kontostand steckt.
+    """
+    entries: list[dict[str, Any]] = []
+    for income in data.get("incomes", []):
+        if income.get("expectationStatus") == "uncertain":
+            continue
+        earliest = from_date + DAY if income.get("expectationStatus") == "received" else from_date
+        for occurrence in get_monthly_occurrence_dates(income, selected_date):
+            if occurrence >= earliest:
+                entries.append({"date": occurrence, "amount": float(income.get("amount") or 0)})
+    return entries
+
+
+def get_planning_start_date(selected_date: date | datetime, today: date | datetime) -> date:
+    selected = parse_date(selected_date)
+    current_day = parse_date(today)
+    month_end = get_month_end(selected)
+    if (selected.year, selected.month) != (current_day.year, current_day.month):
+        return get_month_start(selected)
+    return month_end if current_day > month_end else current_day
+
+
+def build_payment_plan(
+    data: dict[str, Any],
+    selected_date: date | datetime,
+    today: date | datetime | None = None,
+    opening_balance: float | None = None,
+) -> dict[str, Any]:
+    """Der Kern der Monatsende-Garantie.
+
+    Simuliert Tag für Tag den Kontostand aus Startguthaben, erwarteten Einnahmen
+    und offenen Rechnungen. Daraus folgt der Betrag, der jeden Tag frei
+    ausgegeben werden darf, ohne dass bis Monatsende eine Rechnung platzt::
+
+        sicher_pro_tag = min über alle Tage i von
+                         (Kontostand am Tag i - Reserve) / (Anzahl Tage bis i)
+    """
+    selected = parse_date(selected_date)
+    current_day = parse_date(today or datetime.now())
+    month_end = get_month_end(selected)
+    from_date = get_planning_start_date(selected, current_day)
+
+    bills = build_bill_schedule(data, selected, current_day)
+    bills_total = money_sum(bill["amount"] for bill in bills)
+    critical_total = money_sum(bill["amount"] for bill in bills if bill["critical"])
+    reserve = money_sum(goal.get("monthlyAmount") or 0 for goal in data.get("savingsGoals", []) if goal.get("mandatory"))
+    account_total = money_sum(account.get("balance") or 0 for account in data.get("accounts", []))
+    start = round_money(account_total if opening_balance is None else opening_balance)
+
+    income_entries = build_income_schedule(data, selected, from_date)
+    day_count = max(1, (month_end - from_date).days + 1)
+
+    days: list[dict[str, Any]] = []
+    balance = start
+    safe_per_day: float | None = None
+    lowest_balance: float | None = None
+    lowest_balance_date: date | None = None
+    shortfall_date: date | None = None
+
+    for index in range(day_count):
+        day = from_date + timedelta(days=index)
+        # Überfällige Rechnungen sind sofort fällig und landen auf dem ersten Tag.
+        day_bills = [bill for bill in bills if (parse_date(bill["dueDate"]) <= day if index == 0 else parse_date(bill["dueDate"]) == day)]
+        day_income = money_sum(entry["amount"] for entry in income_entries if entry["date"] == day)
+        day_bill_total = money_sum(bill["amount"] for bill in day_bills)
+
+        balance = round_money(balance + day_income - day_bill_total)
+        days.append({
+            "date": day.isoformat(),
+            "income": day_income,
+            "bills": day_bill_total,
+            "billNames": [bill["name"] for bill in day_bills],
+            "balance": balance,
+        })
+
+        spendable = round_money(balance - reserve)
+        if lowest_balance is None or spendable < lowest_balance:
+            lowest_balance = spendable
+            lowest_balance_date = day
+        if spendable < 0 and shortfall_date is None:
+            shortfall_date = day
+        candidate = spendable / (index + 1)
+        safe_per_day = candidate if safe_per_day is None else min(safe_per_day, candidate)
+
+    lowest_balance = 0.0 if lowest_balance is None else lowest_balance
+    shortfall = round_money(abs(lowest_balance)) if lowest_balance < 0 else 0.0
+    safe_value = round_money(max(0.0, safe_per_day or 0.0))
+    overdue = [bill for bill in bills if bill["urgency"] == "overdue"]
+    due_today = [bill for bill in bills if bill["urgency"] == "today"]
+
+    return {
+        "bills": bills,
+        "overdue": overdue,
+        "dueToday": due_today,
+        "dueNext7Days": [bill for bill in bills if bill["urgency"] == "soon"],
+        "billsTotal": bills_total,
+        "criticalTotal": critical_total,
+        "openingBalance": start,
+        "reserve": reserve,
+        "days": days,
+        "lowestBalance": round_money(lowest_balance),
+        "lowestBalanceDate": date_to_iso(lowest_balance_date),
+        "shortfall": shortfall,
+        "shortfallDate": date_to_iso(shortfall_date),
+        "allBillsCovered": shortfall == 0,
+        "safeToSpendPerDay": safe_value,
+        "safeToSpendTotal": round_money(safe_value * day_count),
+        "actions": _payment_actions(data, bills, overdue, due_today, shortfall, shortfall_date, safe_value, day_count),
+    }
+
+
+def _format_money(value: float) -> str:
+    return f"{round_money(value):.2f} €".replace(".", ",")
+
+
+def _payment_actions(
+    data: dict[str, Any],
+    bills: list[dict[str, Any]],
+    overdue: list[dict[str, Any]],
+    due_today: list[dict[str, Any]],
+    shortfall: float,
+    shortfall_date: date | None,
+    safe_per_day: float,
+    day_count: int,
+) -> list[str]:
+    actions: list[str] = []
+    if not data.get("accounts"):
+        actions.append("Trage unter „Kontostände“ dein Girokonto und Bargeld ein. Erst dann kann die Software garantieren, dass das Geld bis Monatsende reicht.")
+    if overdue:
+        names = ", ".join(bill["name"] for bill in overdue)
+        actions.append(f"{describe_bill_count(len(overdue), 'überfällige')} über {_format_money(sum(bill['amount'] for bill in overdue))} zuerst bezahlen: {names}.")
+    if due_today:
+        names = ", ".join(f"{bill['name']} ({_format_money(bill['amount'])})" for bill in due_today)
+        actions.append(f"Heute fällig: {names}.")
+    if shortfall > 0:
+        due = shortfall_date.strftime("%d.%m.%Y") if shortfall_date else ""
+        actions.append(f"Achtung: Am {due} fehlen {_format_money(shortfall)}, damit alle Rechnungen bezahlt werden können.")
+        # Bei einer Deckungslücke steht der sichere Tagesbetrag bereits auf 0 €.
+        # „Weniger ausgeben“ wäre hier ein leerer Rat.
+        actions.append("Sparen beim Alltag reicht dafür nicht - der sichere Tagesbetrag liegt schon bei 0 €. Nötig sind Zahlungsaufschub, Ratenzahlung oder zusätzliche Einnahmen.")
+        shiftable = sorted((bill for bill in bills if not bill["critical"]), key=lambda bill: bill["amount"], reverse=True)[:3]
+        if shiftable:
+            names = ", ".join(f"{bill['name']} ({_format_money(bill['amount'])})" for bill in shiftable)
+            actions.append(f"Nicht kritische Rechnungen zum Verschieben oder Teilzahlen: {names}.")
+        mandatory = [goal for goal in data.get("savingsGoals", []) if goal.get("mandatory")]
+        if mandatory:
+            actions.append(f"Pflichtsparen diesen Monat pausieren würde {_format_money(sum(float(goal.get('monthlyAmount') or 0) for goal in mandatory))} freigeben.")
+    elif not bills:
+        actions.append(f"Aktuell ist keine Rechnung offen. Frei verfügbar: {_format_money(safe_per_day)} pro Tag.")
+    else:
+        subject = "Die offene Rechnung ist" if len(bills) == 1 else f"Alle {len(bills)} offenen Rechnungen sind"
+        actions.append(f"{subject} bis Monatsende gedeckt. Frei verfügbar: {_format_money(safe_per_day)} pro Tag.")
+    return actions
+
+
+def describe_bill_count(count: int, adjective: str = "offene") -> str:
+    """„1 überfällige Rechnung“ statt „1 überfällige Rechnung(en)“."""
+    return f"1 {adjective} Rechnung" if count == 1 else f"{count} {adjective}n Rechnungen"
 
 
 def calculate_person_budget(data: dict[str, Any], selected_date: date, remaining_days: int) -> list[dict[str, Any]]:
@@ -232,7 +475,8 @@ def calculate_household_budget(
     paid_expenses = money_sum(get_monthly_amount(expense, selected) for expense in monthly_expenses if expense.get("status") == "paid")
     fixed_costs = money_sum(get_monthly_amount(expense, selected) for expense in monthly_expenses if expense.get("kind") == "fixed")
     variable_expenses = money_sum(get_monthly_amount(expense, selected) for expense in monthly_expenses if expense.get("kind") == "variable")
-    open_bills = money_sum(get_monthly_amount(expense, selected) for expense in monthly_expenses if expense.get("status") == "open" and expense.get("kind") == "fixed")
+    # Bewusst inklusive offener variabler Ausgaben, damit nichts Unbezahltes aus der Reserve fällt.
+    open_bills = money_sum(get_monthly_amount(expense, selected) for expense in monthly_expenses if expense.get("status") == "open")
     mandatory_savings = money_sum(goal.get("monthlyAmount") or 0 for goal in data.get("savingsGoals", []) if goal.get("mandatory"))
     account_balance_total = money_sum(account.get("balance") or 0 for account in data.get("accounts", []))
     available_funds = round_money(account_balance_total + income_still_expected)
@@ -243,11 +487,33 @@ def calculate_household_budget(
     weekly_budget = calculate_weekly_budget(remaining_money, remaining_days)
     elapsed_days = max(1, (current_day - month_start).days + 1)
     average_daily_spend_so_far = round_money(paid_expenses / elapsed_days)
-    projected_run_out = calculate_projected_run_out_date(remaining_money, average_daily_spend_so_far, current_day, month_end)
+    # Für die Hochrechnung zählt nur der laufende variable Verbrauch. Bereits bezahlte
+    # Fixkosten wie die Miete fallen diesen Monat nicht noch einmal an und würden die
+    # Prognose sonst jeden Monat grundlos auf Rot ziehen.
+    paid_variable_expenses = money_sum(
+        get_monthly_amount(expense, selected)
+        for expense in monthly_expenses
+        if expense.get("status") == "paid" and expense.get("kind") == "variable"
+    )
+    average_variable_daily_spend = round_money(paid_variable_expenses / elapsed_days)
+    projected_run_out = calculate_projected_run_out_date(remaining_money, average_variable_daily_spend, current_day, month_end)
     savings_needed_per_day = 0 if remaining_money >= 0 or remaining_days <= 0 else round_money(abs(remaining_money) / remaining_days)
-    missing_money = abs(remaining_money) if remaining_money < 0 else (round_money((average_daily_spend_so_far - daily_budget) * remaining_days) if projected_run_out else 0)
+    missing_money = abs(remaining_money) if remaining_money < 0 else (round_money((average_variable_daily_spend - daily_budget) * remaining_days) if projected_run_out else 0)
     missing_days = max(0, ceil((month_end - projected_run_out).days)) if projected_run_out else 0
-    status = calculate_budget_status(remaining_money, daily_budget, projected_run_out)
+
+    has_accounts = bool(data.get("accounts"))
+    planning_start = get_planning_start_date(selected, current_day)
+    # Ohne erfasste Konten wird der Monat rein aus dem Plan simuliert: Startwert sind die
+    # Einnahmen abzüglich bereits bezahlter Ausgaben und noch ausstehender Einnahmen,
+    # die der Zeitstrahl selbst wieder zubucht.
+    scheduled_income_total = money_sum(entry["amount"] for entry in build_income_schedule(data, selected, planning_start))
+    payment_plan = build_payment_plan(
+        data,
+        selected,
+        current_day,
+        account_balance_total if has_accounts else round_money(total_income - paid_expenses - scheduled_income_total),
+    )
+    status = calculate_budget_status(remaining_money, daily_budget, projected_run_out, payment_plan)
 
     return {
         "monthStart": date_to_iso(month_start),
@@ -270,21 +536,34 @@ def calculate_household_budget(
         "dailyBudget": daily_budget,
         "weeklyBudget": weekly_budget,
         "averageDailySpendSoFar": average_daily_spend_so_far,
+        "averageVariableDailySpend": average_variable_daily_spend,
         "projectedRunOutDate": date_to_iso(projected_run_out),
         "savingsNeededPerDay": savings_needed_per_day or (round_money(missing_money / remaining_days) if missing_money > 0 and remaining_days > 0 else 0),
         "missingMoney": round_money(max(0, missing_money)),
         "missingDays": missing_days,
         "status": status,
-        "statusText": _budget_status_text(status, projected_run_out),
+        "statusText": _budget_status_text(status, projected_run_out, payment_plan),
         "personBudgets": calculate_person_budget(data, selected, remaining_days),
         "spendingCuts": _spending_cut_suggestions(monthly_expenses),
+        "paymentPlan": payment_plan,
+        "safeToSpendPerDay": payment_plan["safeToSpendPerDay"],
+        "safeToSpendPerWeek": round_money(payment_plan["safeToSpendPerDay"] * 7),
+        "allBillsCovered": payment_plan["allBillsCovered"],
+        "billShortfall": payment_plan["shortfall"],
+        "billShortfallDate": payment_plan["shortfallDate"],
+        "nextBill": payment_plan["bills"][0] if payment_plan["bills"] else None,
     }
 
 
-def _budget_status_text(status: BudgetStatus, projected_run_out_date: date | None = None) -> str:
+def _budget_status_text(status: BudgetStatus, projected_run_out_date: date | None = None, payment_plan: dict[str, Any] | None = None) -> str:
+    if payment_plan and not payment_plan["allBillsCovered"]:
+        due = parse_date(payment_plan["shortfallDate"]).strftime("%d.%m.%Y") if payment_plan.get("shortfallDate") else ""
+        return f"Am {due} fehlen {_format_money(payment_plan['shortfall'])} für offene Rechnungen."
     if status == "green":
-        return "Geld reicht voraussichtlich bis Monatsende."
+        return "Alle Rechnungen sind gedeckt, das Geld reicht bis Monatsende."
     if status == "yellow":
+        if payment_plan and payment_plan["overdue"]:
+            return f"{len(payment_plan['overdue'])} überfällige Rechnung(en) - bitte zuerst bezahlen."
         return "Geld reicht knapp. Bitte vorsichtig ausgeben."
     if projected_run_out_date:
         return f"Geld reicht voraussichtlich nur bis {projected_run_out_date.strftime('%d.%m.%Y')}."

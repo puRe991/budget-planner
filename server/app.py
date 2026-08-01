@@ -7,7 +7,11 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 
-from budget_planner.budget_engine import calculate_household_budget, sample_budget_data
+from budget_planner.budget_engine import (
+    build_payment_plan,
+    calculate_household_budget,
+    sample_budget_data,
+)
 from server.notion import NotionConfigurationError, NotionQueryError, get_budget_data
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,24 @@ def create_app() -> Flask:
         except (TypeError, ValueError, KeyError) as exc:
             return jsonify({"error": f"Ungültige Budgetdaten: {exc}"}), 400
         return jsonify(summary)
+
+    @app.post("/api/budget/payment-plan")
+    def payment_plan():
+        """Zahlungsplan mit Fälligkeiten, Liquiditätsverlauf und Deckungslücke."""
+        payload: dict[str, Any] = request.get_json(silent=True) or {}
+        data = payload.get("data") or sample_budget_data()
+
+        try:
+            selected_date = _parse_iso_datetime(payload.get("selectedDate"), "selectedDate")
+            today = _parse_iso_datetime(payload.get("today"), "today")
+            plan = build_payment_plan(
+                data,
+                selected_date or datetime.now(),
+                today or datetime.now(),
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            return jsonify({"error": f"Ungültige Budgetdaten: {exc}"}), 400
+        return jsonify(plan)
 
     return app
 

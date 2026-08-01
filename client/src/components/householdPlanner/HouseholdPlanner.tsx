@@ -1,6 +1,7 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AccountBalance,
+  BillUrgency,
   BudgetSummary,
   CategoryBudget,
   Debt,
@@ -11,6 +12,7 @@ import {
   IncomeExpectationStatus,
   Person,
   calculateHouseholdBudget,
+  describeBillCount,
   createId,
   roundMoney,
   sampleBudgetData,
@@ -25,6 +27,7 @@ interface HouseholdPlannerProps {
 
 type PlannerTab =
   | "dashboard"
+  | "bills"
   | "accounts"
   | "persons"
   | "incomes"
@@ -39,6 +42,7 @@ type PlannerTab =
 
 const tabs: { id: PlannerTab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
+  { id: "bills", label: "Rechnungen" },
   { id: "accounts", label: "Kontostände" },
   { id: "persons", label: "Personen" },
   { id: "incomes", label: "Einnahmen" },
@@ -364,6 +368,35 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
     });
   };
 
+  /**
+   * Rechnung bezahlen: markiert die Ausgabe als bezahlt und bucht den Betrag
+   * direkt vom gewählten Konto ab, damit Kontostand und Planung zusammenbleiben.
+   */
+  const payBillFromAccount = (
+    expenseId: string,
+    accountId: string,
+    amount: number,
+  ) => {
+    const timestamp = new Date().toISOString();
+    setData({
+      ...data,
+      expenses: data.expenses.map((expense) =>
+        expense.id === expenseId
+          ? { ...expense, status: "paid", updatedAt: timestamp }
+          : expense,
+      ),
+      accounts: data.accounts.map((account) =>
+        account.id === accountId
+          ? {
+              ...account,
+              balance: roundMoney(account.balance - amount),
+              updatedAt: timestamp,
+            }
+          : account,
+      ),
+    });
+  };
+
   const removeExpense = (expenseId: string) =>
     setData({
       ...data,
@@ -476,24 +509,71 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
         <div>
           <p className="planner__eyebrow">Wichtigste Antwort</p>
           <h1>
-            Heute noch ausgeben:{" "}
-            {formatter.format(Math.max(0, summary.dailyBudget))}
+            Heute sicher ausgeben:{" "}
+            {formatter.format(Math.max(0, summary.safeToSpendPerDay))}
           </h1>
           <p>
-            Damit das Geld bis Monatsende reicht. Wochenlimit:{" "}
-            <strong>{formatter.format(summary.weeklyBudget)}</strong>
+            {summary.allBillsCovered ? (
+              <>
+                Alle offenen Rechnungen bis Monatsende sind dabei schon
+                zurückgelegt. Wochenlimit:{" "}
+                <strong>{formatter.format(summary.safeToSpendPerWeek)}</strong>
+              </>
+            ) : (
+              <>
+                Zuerst müssen die Rechnungen gedeckt sein. Es fehlen{" "}
+                <strong>{formatter.format(summary.billShortfall)}</strong>
+                {summary.billShortfallDate
+                  ? ` bis zum ${summary.billShortfallDate.toLocaleDateString("de-DE")}`
+                  : ""}
+                .
+              </>
+            )}
           </p>
         </div>
         <div className="planner__heroStatus">
           <span>{summary.status.toUpperCase()}</span>
           <strong>{summary.statusText}</strong>
           <small>
-            {summary.projectedRunOutDate
-              ? `Prognose: aufgebraucht am ${summary.projectedRunOutDate.toLocaleDateString("de-DE")}`
-              : "Prognose: Geld reicht bis Monatsende"}
+            {summary.allBillsCovered
+              ? `${describeBillCount(summary.paymentPlan.bills.length)} über ${formatter.format(summary.paymentPlan.billsTotal)} gedeckt`
+              : `Deckungslücke: ${formatter.format(summary.billShortfall)}`}
           </small>
+          <button
+            className="planner__heroAction"
+            onClick={() => setActiveTab("bills")}
+          >
+            Rechnungen ansehen
+          </button>
         </div>
       </header>
+
+      {(summary.paymentPlan.overdue.length > 0 ||
+        summary.paymentPlan.dueToday.length > 0 ||
+        !summary.allBillsCovered) && (
+        <button
+          className={`planner__alert planner__alert--${
+            summary.allBillsCovered ? "warn" : "danger"
+          }`}
+          onClick={() => setActiveTab("bills")}
+        >
+          {!summary.allBillsCovered
+            ? `Es fehlen ${formatter.format(summary.billShortfall)} für die offenen Rechnungen. Jetzt Zahlungsplan öffnen.`
+            : summary.paymentPlan.overdue.length > 0
+              ? `${describeBillCount(
+                  summary.paymentPlan.overdue.length,
+                  "überfällige",
+                )} über ${formatter.format(
+                  summary.paymentPlan.overdue.reduce(
+                    (total, bill) => total + bill.amount,
+                    0,
+                  ),
+                )}. Jetzt bezahlen.`
+              : `Heute fällig: ${summary.paymentPlan.dueToday
+                  .map((bill) => bill.name)
+                  .join(", ")}. Jetzt bezahlen.`}
+        </button>
+      )}
 
       <nav className="planner__tabs" aria-label="Budgetbereiche">
         {tabs.map((tab) => (
@@ -512,6 +592,14 @@ const HouseholdPlanner = ({ date }: HouseholdPlannerProps) => {
       </nav>
 
       {activeTab === "dashboard" && <Dashboard summary={summary} data={data} />}
+      {activeTab === "bills" && (
+        <BillAssistant
+          summary={summary}
+          data={data}
+          payBill={payBillFromAccount}
+          markPaid={markExpensePaid}
+        />
+      )}
       {activeTab === "accounts" && (
         <Accounts
           data={data}
@@ -610,11 +698,26 @@ const Dashboard = ({
     <div className="planner__card planner__wide planner__focusRow">
       <h3>Kernwerte heute</h3>
       <p>
-        Restgeld bis Monatsende <strong>{formatter.format(summary.remainingMoney)}</strong> ·
-        Tagesbudget <strong>{formatter.format(summary.dailyBudget)}</strong> · Wochenbudget{" "}
-        <strong>{formatter.format(summary.weeklyBudget)}</strong>
+        Sicher heute <strong>{formatter.format(summary.safeToSpendPerDay)}</strong> ·
+        sicher diese Woche <strong>{formatter.format(summary.safeToSpendPerWeek)}</strong> ·
+        Restgeld bis Monatsende{" "}
+        <strong>{formatter.format(summary.remainingMoney)}</strong>
+      </p>
+      <p>
+        {summary.allBillsCovered
+          ? `${describeBillCount(summary.paymentPlan.bills.length)} über ${formatter.format(summary.paymentPlan.billsTotal)} sind bereits zurückgelegt.`
+          : `Achtung: Für die offenen Rechnungen fehlen ${formatter.format(summary.billShortfall)}.`}
       </p>
     </div>
+    <Metric
+      title="Heute sicher ausgeben"
+      value={formatter.format(summary.safeToSpendPerDay)}
+      highlight
+    />
+    <Metric
+      title="Offene Rechnungen"
+      value={formatter.format(summary.paymentPlan.billsTotal)}
+    />
     <Metric
       title="Aktuelle Kontostände"
       value={formatter.format(summary.accountBalanceTotal)}
@@ -642,8 +745,13 @@ const Dashboard = ({
       value={formatter.format(summary.paidExpenses)}
     />
     <Metric
-      title="Noch offene Fixkosten"
-      value={formatter.format(summary.openBills)}
+      title="Nächste Fälligkeit"
+      value={
+        summary.nextBill
+          ? `${summary.nextBill.name} · ${formatter.format(summary.nextBill.amount)} · ${summary.nextBill.dueDate.toLocaleDateString("de-DE")}`
+          : "keine offene Rechnung"
+      }
+      text
     />
     <Metric
       title="Konten / Personen"
@@ -659,8 +767,8 @@ const Dashboard = ({
       </p>
       <p>
         Noch {summary.remainingDays} Tage. Wenn täglich mehr als{" "}
-        {formatter.format(summary.dailyBudget)} ausgegeben wird, reicht das Geld
-        nicht bis Monatsende.
+        {formatter.format(summary.safeToSpendPerDay)} ausgegeben wird, reicht das
+        Geld nicht für alle Rechnungen bis Monatsende.
       </p>
       {summary.missingMoney > 0 && (
         <p>
@@ -668,6 +776,11 @@ const Dashboard = ({
           Spare ca. {formatter.format(summary.savingsNeededPerDay)} pro Tag.
         </p>
       )}
+      <ul className="planner__actions">
+        {summary.paymentPlan.actions.map((action) => (
+          <li key={action}>{action}</li>
+        ))}
+      </ul>
     </div>
   </section>
 );
@@ -1083,10 +1196,14 @@ const MonthPlanning = ({ summary }: { summary: BudgetSummary }) => (
       value={formatter.format(summary.remainingMoney)}
       highlight
     />
-    <Metric title="Tagesbudget" value={formatter.format(summary.dailyBudget)} />
     <Metric
-      title="Wochenbudget"
-      value={formatter.format(summary.weeklyBudget)}
+      title="Sicher pro Tag"
+      value={formatter.format(summary.safeToSpendPerDay)}
+      highlight
+    />
+    <Metric
+      title="Sicher pro Woche"
+      value={formatter.format(summary.safeToSpendPerWeek)}
     />
     <Metric
       title="Sparbetrag"
@@ -1128,7 +1245,7 @@ const WeekPlanning = ({
     <section className="planner__grid">
       <Metric
         title="Budget für diese Woche"
-        value={formatter.format(summary.weeklyBudget)}
+        value={formatter.format(summary.safeToSpendPerWeek)}
         highlight
       />
       <Metric
@@ -1137,16 +1254,16 @@ const WeekPlanning = ({
       />
       <Metric
         title="Restbudget diese Woche"
-        value={formatter.format(summary.weeklyBudget - spentThisWeek)}
+        value={formatter.format(summary.safeToSpendPerWeek - spentThisWeek)}
       />
       <Metric
         title="Tägliches Limit"
-        value={formatter.format(summary.dailyBudget)}
+        value={formatter.format(summary.safeToSpendPerDay)}
       />
       <div className="planner__card planner__wide">
         <h3>Geplante Ausgaben & Warnung</h3>
         <p>
-          {spentThisWeek > summary.weeklyBudget
+          {spentThisWeek > summary.safeToSpendPerWeek
             ? "Wochenbudget überschritten. Bitte Ausgaben sofort reduzieren."
             : "Wochenbudget ist aktuell im Rahmen."}
         </p>
@@ -1181,17 +1298,22 @@ const DayPlanning = ({ summary, data, addQuickExpense, selectedDate }: any) => {
       <div className="planner__panel">
         <h2>Tagesübersicht</h2>
         <p className="planner__big">
-          Heute verfügbar: {formatter.format(summary.dailyBudget)}
+          Heute sicher verfügbar: {formatter.format(summary.safeToSpendPerDay)}
         </p>
         <p>Bereits ausgegeben: {formatter.format(spentToday)}</p>
         <p>
           Heute noch möglich:{" "}
-          {formatter.format(Math.max(0, summary.dailyBudget - spentToday))}
+          {formatter.format(Math.max(0, summary.safeToSpendPerDay - spentToday))}
         </p>
         <p>
-          {spentToday > summary.dailyBudget
+          {spentToday > summary.safeToSpendPerDay
             ? "Warnung: Tagesbudget überschritten."
             : "Heute bist du im Plan."}
+        </p>
+        <p>
+          In diesem Betrag sind alle offenen Rechnungen bis Monatsende schon
+          zurückgelegt. Er wird jeden Tag neu berechnet und steigt, sobald
+          erwartete Einnahmen eingegangen sind.
         </p>
       </div>
       <form
@@ -1543,6 +1665,208 @@ const HouseholdReality = ({
               ? "Kontostände und Planung passen zusammen."
               : "Bitte Kontostände, offene Rechnungen oder erwartete Einnahmen prüfen."}
         </p>
+      </div>
+    </section>
+  );
+};
+
+const urgencyLabels: Record<BillUrgency, string> = {
+  overdue: "überfällig",
+  today: "heute fällig",
+  soon: "diese Woche",
+  later: "später im Monat",
+};
+
+/**
+ * Zahlungsassistent: welche Rechnung wann bezahlt werden muss, ob das Geld
+ * dafür da ist und was zu tun ist, wenn es nicht reicht.
+ */
+const BillAssistant = ({
+  summary,
+  data,
+  payBill,
+  markPaid,
+}: {
+  summary: BudgetSummary;
+  data: HouseholdBudgetData;
+  payBill: (expenseId: string, accountId: string, amount: number) => void;
+  markPaid: (expenseId: string) => void;
+}) => {
+  const plan = summary.paymentPlan;
+  const [payFrom, setPayFrom] = useState<Record<string, string>>({});
+  const defaultAccountId = data.accounts[0]?.id || "";
+  const groups: BillUrgency[] = ["overdue", "today", "soon", "later"];
+  const maxBalance = Math.max(
+    1,
+    ...plan.days.map((day) => Math.abs(day.balance)),
+  );
+
+  return (
+    <section className="planner__reality">
+      <div
+        className={`planner__panel planner__wide planner__coverage planner__coverage--${
+          plan.allBillsCovered ? "ok" : "gap"
+        }`}
+      >
+        <h2>
+          {plan.allBillsCovered
+            ? "Alle Rechnungen sind bis Monatsende gedeckt"
+            : `Es fehlen ${formatter.format(plan.shortfall)}`}
+        </h2>
+        <p>
+          Offene Rechnungen: <strong>{formatter.format(plan.billsTotal)}</strong>{" "}
+          ({plan.bills.length} Stück, davon kritisch{" "}
+          {formatter.format(plan.criticalTotal)}) · Startguthaben{" "}
+          <strong>{formatter.format(plan.openingBalance)}</strong>
+          {plan.reserve > 0 && (
+            <> · fest zurückgelegt {formatter.format(plan.reserve)}</>
+          )}
+        </p>
+        <p>
+          Niedrigster Kontostand im Monat:{" "}
+          <strong>{formatter.format(plan.lowestBalance)}</strong>
+          {plan.lowestBalanceDate
+            ? ` am ${plan.lowestBalanceDate.toLocaleDateString("de-DE")}`
+            : ""}
+        </p>
+        <ul className="planner__actions">
+          {plan.actions.map((action) => (
+            <li key={action}>{action}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="planner__panel planner__wide">
+        <h2>Zahlungsplan</h2>
+        <p>
+          „Bezahlen“ markiert die Rechnung als bezahlt und bucht den Betrag vom
+          gewählten Konto ab.
+        </p>
+        {plan.bills.length === 0 && (
+          <EmptyState text="Keine offenen Rechnungen. Alles bezahlt." />
+        )}
+        {groups.map((urgency) => {
+          const bills = plan.bills.filter((bill) => bill.urgency === urgency);
+          if (bills.length === 0) return null;
+          return (
+            <div key={urgency} className="planner__billGroup">
+              <h3>
+                {urgencyLabels[urgency]} ·{" "}
+                {formatter.format(
+                  bills.reduce((total, bill) => total + bill.amount, 0),
+                )}
+              </h3>
+              {bills.map((bill) => (
+                <div
+                  className={`planner__row planner__bill planner__bill--${bill.urgency}`}
+                  key={bill.key}
+                >
+                  <span>
+                    <strong>
+                      {bill.name}
+                      {bill.critical ? " ★" : ""}
+                    </strong>
+                    <small>
+                      fällig {bill.dueDate.toLocaleDateString("de-DE")} ·{" "}
+                      {bill.category} ·{" "}
+                      {bill.daysUntilDue < 0
+                        ? `seit ${Math.abs(bill.daysUntilDue)} ${
+                            bill.daysUntilDue === -1 ? "Tag" : "Tagen"
+                          } überfällig`
+                        : bill.daysUntilDue === 0
+                          ? "heute"
+                          : `in ${bill.daysUntilDue} ${
+                              bill.daysUntilDue === 1 ? "Tag" : "Tagen"
+                            }`}
+                    </small>
+                  </span>
+                  <span className="planner__billAmount">
+                    {formatter.format(bill.amount)}
+                  </span>
+                  {data.accounts.length > 0 ? (
+                    <>
+                      <select
+                        aria-label={`Konto für ${bill.name}`}
+                        value={payFrom[bill.key] || defaultAccountId}
+                        onChange={(event) =>
+                          setPayFrom({
+                            ...payFrom,
+                            [bill.key]: event.target.value,
+                          })
+                        }
+                      >
+                        {data.accounts.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.name} ({formatter.format(account.balance)})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="planner__primary"
+                        onClick={() =>
+                          payBill(
+                            bill.expenseId,
+                            payFrom[bill.key] || defaultAccountId,
+                            bill.amount,
+                          )
+                        }
+                      >
+                        Bezahlen
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => markPaid(bill.expenseId)}>
+                      Als bezahlt markieren
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="planner__panel planner__wide">
+        <h2>Kontostand bis Monatsende</h2>
+        <p>
+          So entwickelt sich dein Geld, wenn alle offenen Rechnungen pünktlich
+          bezahlt werden - noch ohne freie Ausgaben.
+        </p>
+        <div className="planner__timeline">
+          {plan.days.map((day) => (
+            <div
+              className={`planner__timelineDay${
+                day.balance - plan.reserve < 0
+                  ? " planner__timelineDay--negative"
+                  : ""
+              }`}
+              key={day.date.toISOString()}
+            >
+              <span className="planner__timelineDate">
+                {day.date.toLocaleDateString("de-DE", {
+                  day: "2-digit",
+                  month: "2-digit",
+                })}
+              </span>
+              <span className="planner__timelineBar">
+                <span
+                  style={{
+                    width: `${Math.min(100, (Math.abs(day.balance) / maxBalance) * 100)}%`,
+                  }}
+                />
+              </span>
+              <span className="planner__timelineValue">
+                {formatter.format(day.balance)}
+              </span>
+              <small className="planner__timelineNote">
+                {day.income > 0 ? `+${formatter.format(day.income)} ` : ""}
+                {day.bills > 0
+                  ? `-${formatter.format(day.bills)} (${day.billNames.join(", ")})`
+                  : ""}
+              </small>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );
