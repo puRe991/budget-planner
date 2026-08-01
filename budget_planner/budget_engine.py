@@ -11,6 +11,11 @@ BudgetStatus = Literal["green", "yellow", "red"]
 
 DAY = timedelta(days=1)
 
+# Die Tempo-Hochrechnung braucht genug Beobachtungstage. Am 1. eines Monats
+# wuerde eine einzelne Ausgabe durch einen Tag geteilt und als taeglicher
+# Verbrauch hochgerechnet - das ergibt absurde Werte.
+MIN_DAYS_FOR_TREND = 5
+
 
 def round_money(value: float | int) -> float:
     return round(float(value) + 1e-9, 2)
@@ -216,9 +221,13 @@ def calculate_budget_status(
     # Eine ungedeckte Rechnung ist immer rot - egal wie gut der Monat sonst aussieht.
     if payment_plan and not payment_plan["allBillsCovered"]:
         return "red"
-    if remaining_money < 0 or projected_run_out_date:
+    if remaining_money < 0:
         return "red"
     if payment_plan and payment_plan["overdue"]:
+        return "yellow"
+    # Die Tempo-Hochrechnung ist nur ein Hinweis: Wer den sicheren Tagesbetrag
+    # einhaelt, kann nicht vorzeitig leer laufen. Deshalb gelb statt rot.
+    if projected_run_out_date:
         return "yellow"
     if daily_budget < 10:
         return "yellow"
@@ -496,7 +505,11 @@ def calculate_household_budget(
         if expense.get("status") == "paid" and expense.get("kind") == "variable"
     )
     average_variable_daily_spend = round_money(paid_variable_expenses / elapsed_days)
-    projected_run_out = calculate_projected_run_out_date(remaining_money, average_variable_daily_spend, current_day, month_end)
+    projected_run_out = (
+        calculate_projected_run_out_date(remaining_money, average_variable_daily_spend, current_day, month_end)
+        if elapsed_days >= MIN_DAYS_FOR_TREND
+        else None
+    )
     savings_needed_per_day = 0 if remaining_money >= 0 or remaining_days <= 0 else round_money(abs(remaining_money) / remaining_days)
     missing_money = abs(remaining_money) if remaining_money < 0 else (round_money((average_variable_daily_spend - daily_budget) * remaining_days) if projected_run_out else 0)
     missing_days = max(0, ceil((month_end - projected_run_out).days)) if projected_run_out else 0
@@ -563,10 +576,14 @@ def _budget_status_text(status: BudgetStatus, projected_run_out_date: date | Non
         return "Alle Rechnungen sind gedeckt, das Geld reicht bis Monatsende."
     if status == "yellow":
         if payment_plan and payment_plan["overdue"]:
-            return f"{len(payment_plan['overdue'])} überfällige Rechnung(en) - bitte zuerst bezahlen."
+            return f"{describe_bill_count(len(payment_plan['overdue']), 'überfällige')} - bitte zuerst bezahlen."
+        if projected_run_out_date:
+            safe = _format_money(payment_plan["safeToSpendPerDay"]) if payment_plan else "den sicheren Betrag"
+            return (
+                f"Bei deinem bisherigen Tempo wäre das Geld am {projected_run_out_date.strftime('%d.%m.%Y')} "
+                f"aufgebraucht. Sicher sind {safe} pro Tag."
+            )
         return "Geld reicht knapp. Bitte vorsichtig ausgeben."
-    if projected_run_out_date:
-        return f"Geld reicht voraussichtlich nur bis {projected_run_out_date.strftime('%d.%m.%Y')}."
     return "Geld reicht voraussichtlich nicht bis Monatsende."
 
 

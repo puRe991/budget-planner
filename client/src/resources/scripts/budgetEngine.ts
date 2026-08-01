@@ -204,6 +204,17 @@ export interface BudgetSummary {
   nextBill?: BillOccurrence;
 }
 
+/** Einheitliche Euro-Formatierung fuer die gesamte Oberflaeche. */
+export const formatter = new Intl.NumberFormat("de-DE", {
+  style: "currency",
+  currency: "EUR",
+});
+
+// Die Tempo-Hochrechnung braucht genug Beobachtungstage. Am 1. eines Monats
+// würde eine einzelne Ausgabe durch einen Tag geteilt und als täglicher
+// Verbrauch hochgerechnet - das ergibt absurde Werte.
+const MIN_DAYS_FOR_TREND = 5;
+
 const dayMs = 24 * 60 * 60 * 1000;
 
 export const roundMoney = (value: number) =>
@@ -1105,12 +1116,15 @@ export function calculateHouseholdBudget(
   const averageVariableDailySpend = roundMoney(
     paidVariableExpenses / elapsedDays,
   );
-  const projectedRunOutDate = calculateProjectedRunOutDate(
-    remainingMoney,
-    averageVariableDailySpend,
-    today,
-    monthEnd,
-  );
+  const projectedRunOutDate =
+    elapsedDays >= MIN_DAYS_FOR_TREND
+      ? calculateProjectedRunOutDate(
+          remainingMoney,
+          averageVariableDailySpend,
+          today,
+          monthEnd,
+        )
+      : undefined;
   const savingsNeededPerDay = calculateSavingsNeededPerDay(
     remainingMoney,
     remainingDays,
@@ -1202,8 +1216,11 @@ export function calculateBudgetStatus(
 ): BudgetStatus {
   // Eine ungedeckte Rechnung ist immer rot - egal wie gut der Monat sonst aussieht.
   if (paymentPlan && !paymentPlan.allBillsCovered) return "red";
-  if (remainingMoney < 0 || projectedRunOutDate) return "red";
+  if (remainingMoney < 0) return "red";
   if (paymentPlan && paymentPlan.overdue.length > 0) return "yellow";
+  // Die Tempo-Hochrechnung ist nur ein Hinweis: Wer den sicheren Tagesbetrag
+  // einhält, kann nicht vorzeitig leer laufen. Deshalb gelb statt rot.
+  if (projectedRunOutDate) return "yellow";
   if (dailyBudget < 10) return "yellow";
   return "green";
 }
@@ -1223,13 +1240,18 @@ function getBudgetStatusText(
   }
   if (status === "green")
     return "Alle Rechnungen sind gedeckt, das Geld reicht bis Monatsende.";
-  if (status === "yellow")
-    return paymentPlan && paymentPlan.overdue.length > 0
-      ? `${paymentPlan.overdue.length} überfällige Rechnung(en) - bitte zuerst bezahlen.`
-      : "Geld reicht knapp. Bitte vorsichtig ausgeben.";
-  return projectedRunOutDate
-    ? `Geld reicht voraussichtlich nur bis ${projectedRunOutDate.toLocaleDateString("de-DE")}.`
-    : "Geld reicht voraussichtlich nicht bis Monatsende.";
+  if (status === "yellow") {
+    if (paymentPlan && paymentPlan.overdue.length > 0)
+      return `${describeBillCount(paymentPlan.overdue.length, "überfällige")} - bitte zuerst bezahlen.`;
+    if (projectedRunOutDate)
+      return `Bei deinem bisherigen Tempo wäre das Geld am ${projectedRunOutDate.toLocaleDateString(
+        "de-DE",
+      )} aufgebraucht. Sicher sind ${formatter.format(
+        paymentPlan?.safeToSpendPerDay || 0,
+      )} pro Tag.`;
+    return "Geld reicht knapp. Bitte vorsichtig ausgeben.";
+  }
+  return "Geld reicht voraussichtlich nicht bis Monatsende.";
 }
 
 function buildSpendingCutSuggestions(expenses: Expense[]): string[] {

@@ -14,11 +14,11 @@ import {
   calculateHouseholdBudget,
   describeBillCount,
   createId,
+  formatter,
   roundMoney,
   sampleBudgetData,
   toDateInputValue,
 } from "../../resources/scripts/budgetEngine";
-import { formatter } from "../../resources/scripts/helpers";
 import "./householdPlanner.scss";
 
 interface HouseholdPlannerProps {
@@ -705,7 +705,7 @@ const Dashboard = ({
       </p>
       <p>
         {summary.allBillsCovered
-          ? `${describeBillCount(summary.paymentPlan.bills.length)} über ${formatter.format(summary.paymentPlan.billsTotal)} sind bereits zurückgelegt.`
+          ? `Für ${describeBillCount(summary.paymentPlan.bills.length)} sind ${formatter.format(summary.paymentPlan.billsTotal)} bereits zurückgelegt.`
           : `Achtung: Für die offenen Rechnungen fehlen ${formatter.format(summary.billShortfall)}.`}
       </p>
     </div>

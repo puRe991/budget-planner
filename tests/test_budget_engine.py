@@ -184,6 +184,84 @@ def test_mandatory_savings_stay_reserved():
     assert plan["shortfall"] == 50
 
 
+def test_no_trend_projection_at_the_start_of_the_month():
+    """Am 1. des Monats gibt es genau einen Beobachtungstag. Die Hochrechnung
+    haette dort 1.395 EUR Ausgaben als Tagesverbrauch gewertet und den Status
+    auf Rot gezogen - obwohl alle Rechnungen gedeckt sind."""
+    data = {
+        "accounts": [{"id": "a1", "name": "Giro", "balance": 1079}],
+        "persons": [],
+        "incomes": [
+            {
+                "id": "income-1",
+                "name": "Gehalt",
+                "amount": 1074,
+                "ownerType": "household",
+                "date": "2026-08-15",
+                "repeat": "monthly",
+                "category": "Lohn / Gehalt",
+            }
+        ],
+        "expenses": [
+            _bill(amount=55, date="2026-08-01", name="Strom", category="Energie"),
+            {
+                "id": "expense-paid",
+                "name": "Einkaeufe",
+                "amount": 1395,
+                "kind": "variable",
+                "category": "Lebensmittel",
+                "date": "2026-08-01",
+                "ownerType": "household",
+                "status": "paid",
+                "repeat": "once",
+            },
+        ],
+        "debts": [],
+        "savingsGoals": [],
+    }
+
+    summary = calculate_household_budget(data, selected_date=date(2026, 8, 1), today=date(2026, 8, 1))
+
+    assert summary["allBillsCovered"] is True
+    assert summary["safeToSpendPerDay"] == 67.68
+    assert summary["projectedRunOutDate"] is None
+    assert summary["missingMoney"] == 0
+    assert summary["status"] == "green"
+    assert summary["statusText"] == "Alle Rechnungen sind gedeckt, das Geld reicht bis Monatsende."
+
+
+def test_trend_projection_warns_yellow_once_there_is_enough_history():
+    """Ab dem 6. Tag ist die Hochrechnung aussagekraeftig. Sie warnt dann gelb -
+    rot bleibt fuer echte Deckungsluecken reserviert."""
+    data = {
+        "accounts": [{"id": "a1", "name": "Giro", "balance": 600}],
+        "persons": [],
+        "incomes": [],
+        "expenses": [
+            {
+                "id": "expense-paid",
+                "name": "Einkaeufe",
+                "amount": 700,
+                "kind": "variable",
+                "category": "Lebensmittel",
+                "date": "2026-08-01",
+                "ownerType": "household",
+                "status": "paid",
+                "repeat": "once",
+            }
+        ],
+        "debts": [],
+        "savingsGoals": [],
+    }
+
+    summary = calculate_household_budget(data, selected_date=date(2026, 8, 1), today=date(2026, 8, 10))
+
+    assert summary["allBillsCovered"] is True
+    assert summary["projectedRunOutDate"] is not None
+    assert summary["status"] == "yellow"
+    assert "bisherigen Tempo" in summary["statusText"]
+
+
 def test_bill_schedule_lists_every_repeating_due_date():
     data = {
         "accounts": [],
