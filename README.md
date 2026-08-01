@@ -55,17 +55,25 @@ npm run dev
 
 ### Windows-Fehlerbehebung (häufig)
 
-Wenn beim Start `ModuleNotFoundError: No module named 'flask'` erscheint, fehlen die Python-Abhängigkeiten. Dann im **Projekt-Root** ausführen:
+`npm run dev` prüft vor dem Start selbst, ob alles da ist, und nennt den fehlenden Schritt. Die beiden häufigsten Meldungen:
+
+**„Die Python-Abhängigkeiten fehlen (kein Modul 'flask')"** – im **Projekt-Root** ausführen:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+.venv\Scripts\activate
 pip install -r requirements.txt
-npm install --prefix client
-npm run dev
 ```
 
-Wenn im `client`-Ordner `npm run dev` fehlt: Es gibt dort einen Alias, der intern `npm start` nutzt.
+**„Die Client-Abhängigkeiten fehlen"** – `npm install` im Projekt-Root reicht nicht, die React-App liegt im Unterordner `client`:
+
+```bash
+npm install --prefix client
+```
+
+Danach `npm run dev` erneut starten. Wenn im `client`-Ordner `npm run dev` fehlt: Es gibt dort einen Alias, der intern `npm start` nutzt.
+
+> Hinweis: `FileNotFoundError: [WinError 2]` beim Start von npm trat in älteren Ständen auf, weil npm unter Windows `npm.cmd` heißt. Das Startskript löst den Pfad jetzt selbst auf.
 
 Alternativ kann nur die React-App gestartet werden:
 
